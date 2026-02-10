@@ -3,7 +3,7 @@
 
 import { GalleryVerticalEnd } from "lucide-react";
 import { useActionState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +23,7 @@ const initialState = {
   message: "",
   errors: [] as Array<{ field: string; message: string }>,
   user: undefined,
+  redirectTo: undefined,
 };
 
 function SubmitButton({ pending }: { pending: boolean }) {
@@ -42,6 +43,7 @@ export function LoginForm({
     initialState,
   );
   const router = useRouter();
+  const searchParams = useSearchParams();
   const login = useAuthStore((state) => state.login);
 
   useEffect(() => {
@@ -49,12 +51,17 @@ export function LoginForm({
       // Update Zustand store
       login(state.user);
 
-      // Clear history and redirect to dashboard
-      window.history.replaceState(null, "", "/dashboard");
-      router.replace("/dashboard");
-      router.refresh(); // Refresh to update server components
+      // Get the redirect path from state or URL params
+      const redirectTo =
+        state.redirectTo || searchParams.get("redirect") || "/dashboard";
+
+      // Use window.location.href for a full page reload to ensure proper redirect
+      // This clears any stale state and ensures the middleware runs properly
+      setTimeout(() => {
+        window.location.href = redirectTo;
+      }, 100);
     }
-  }, [state?.success, state?.user, login, router]);
+  }, [state?.success, state?.user, state?.redirectTo, searchParams, login]);
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
@@ -76,6 +83,13 @@ export function LoginForm({
           {/* Error message */}
           {state?.message && !state?.success && (
             <div className="rounded-lg bg-red-50 p-4 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+              {state.message}
+            </div>
+          )}
+
+          {/* Success message */}
+          {state?.success && (
+            <div className="rounded-lg bg-green-50 p-4 text-sm text-green-600 dark:bg-green-900/20 dark:text-green-400">
               {state.message}
             </div>
           )}

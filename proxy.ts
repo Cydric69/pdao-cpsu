@@ -47,6 +47,8 @@ export async function proxy(request: NextRequest) {
   const isProtectedRoute = protectedRoutes.some((route) =>
     pathname.startsWith(route),
   );
+
+  // Check if route is public or static file
   const isPublicRoute =
     publicRoutes.includes(pathname) ||
     pathname.startsWith("/_next") ||
@@ -54,7 +56,9 @@ export async function proxy(request: NextRequest) {
     pathname.includes(".ico") ||
     pathname.includes(".png") ||
     pathname.includes(".jpg") ||
-    pathname.includes(".svg");
+    pathname.includes(".svg") ||
+    pathname.includes(".css") ||
+    pathname.includes(".js");
 
   // Skip middleware for non-protected routes and static files
   if (!isProtectedRoute || isPublicRoute) {
@@ -127,7 +131,13 @@ export async function proxy(request: NextRequest) {
   // No valid tokens, redirect to login
   const loginUrl = new URL("/", request.url);
   loginUrl.searchParams.set("redirect", pathname);
-  return NextResponse.redirect(loginUrl);
+
+  // Clear any invalid cookies
+  const response = NextResponse.redirect(loginUrl);
+  response.cookies.delete("access_token");
+  response.cookies.delete("refresh_token");
+
+  return response;
 }
 
 // You can also export as default

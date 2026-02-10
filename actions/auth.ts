@@ -31,6 +31,7 @@ interface LoginState {
     email: string;
     role: string;
   };
+  redirectTo?: string;
 }
 
 // Updated loginAction to work with useActionState
@@ -91,7 +92,7 @@ export async function loginAction(
     // Set cookies
     await setAuthCookies(accessToken, refreshToken);
 
-    // Return success state with user data
+    // Return success state with user data and redirect path
     return {
       success: true,
       message: "Login successful",
@@ -106,6 +107,7 @@ export async function loginAction(
         email: admin.email,
         role: admin.role,
       },
+      redirectTo: "/dashboard",
     };
   } catch (error) {
     console.error("Login error:", error);
@@ -127,6 +129,12 @@ export async function loginAction(
       errors: [],
     };
   }
+}
+
+// Add this new function for server-side redirect
+export async function redirectToDashboard(): Promise<never> {
+  "use server";
+  redirect("/dashboard");
 }
 
 // Simplified logout action
