@@ -1,11 +1,29 @@
-// components/logout-button.tsx
+// components/logout-button.tsx - Updated to accept children
 "use client";
 
 import { Button } from "@/components/ui/button";
 import { logoutAction } from "@/actions/auth";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
+import { ReactNode } from "react";
 
-export function LogoutButton() {
+interface LogoutButtonProps {
+  className?: string;
+  variant?:
+    | "default"
+    | "destructive"
+    | "outline"
+    | "secondary"
+    | "ghost"
+    | "link";
+  children?: ReactNode;
+}
+
+export function LogoutButton({
+  className,
+  variant = "outline",
+  children,
+}: LogoutButtonProps) {
   const router = useRouter();
 
   const handleLogout = async () => {
@@ -26,8 +44,13 @@ export function LogoutButton() {
   };
 
   return (
-    <Button onClick={handleLogout} variant="outline">
-      Logout
+    <Button
+      onClick={handleLogout}
+      variant={variant}
+      className={cn("h-8 text-xs sm:text-sm", className)}
+      size="sm"
+    >
+      {children || "Logout"}
     </Button>
   );
 }

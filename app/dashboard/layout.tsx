@@ -1,0 +1,24 @@
+// app/dashboard/layout.tsx
+import { validateSession } from "@/actions/auth";
+import { redirect } from "next/navigation";
+import DashboardHeader from "@/components/dashboard/header";
+
+export default async function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  // Server-side auth check using server action
+  const { isValid, user } = await validateSession();
+
+  if (!isValid) {
+    redirect("/");
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      <DashboardHeader user={user!} />
+      {children}
+    </div>
+  );
+}
