@@ -27,6 +27,7 @@ if (!global.mongoose) {
 
 export async function connectToDatabase() {
   if (cached.conn) {
+    console.log("📦 Using cached database connection");
     return cached.conn;
   }
 
@@ -34,15 +35,24 @@ export async function connectToDatabase() {
     const opts = {
       bufferCommands: false,
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
+      connectTimeoutMS: 10000,
       family: 4,
+      retryWrites: true,
+      retryReads: true,
+      // FORCE the database name to 'pdao'
+      dbName: "pdao",
     };
+
+    console.log("🔄 Connecting to MongoDB...");
+    console.log("📊 Target database:", opts.dbName);
 
     cached.promise = mongoose
       .connect(MONGODB_URI, opts)
       .then((mongoose) => {
-        console.log("✅ Connected to MongoDB Atlas");
+        console.log("✅ Connected to MongoDB");
+        console.log("📊 Connected to database:", mongoose.connection.name);
         return mongoose;
       })
       .catch((error) => {
@@ -62,17 +72,11 @@ export async function connectToDatabase() {
   return cached.conn;
 }
 
-// Helper function to check if connected
-export function isConnected() {
-  return mongoose.connection.readyState === 1;
-}
-
-// Helper function to disconnect (useful for testing)
-export async function disconnectFromDatabase() {
-  if (cached.conn) {
-    await mongoose.disconnect();
-    cached.conn = null;
-    cached.promise = null;
-    console.log("Disconnected from MongoDB");
-  }
+// Helper to check current database
+export function getCurrentDatabase() {
+  return {
+    name: mongoose.connection.name,
+    readyState: mongoose.connection.readyState,
+    host: mongoose.connection.host,
+  };
 }
