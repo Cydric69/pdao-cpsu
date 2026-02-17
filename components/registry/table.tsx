@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import {
   Table,
   TableBody,
@@ -61,6 +62,7 @@ interface FilterState {
 }
 
 export function RegistryTable({ initialUsers }: RegistryTableProps) {
+  const router = useRouter();
   const [filters, setFilters] = React.useState<FilterState>({
     search: "",
     verification: "all",
@@ -142,6 +144,14 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
       name: getFullName(user),
       is_verified: user.is_verified,
     });
+
+    // Check if user is already verified
+    if (user.is_verified) {
+      toast.error("User is already verified");
+      return;
+    }
+
+    // Open confirmation dialog
     setSelectedUser(user);
     setDialogType("verify");
     setDialogOpen(true);
@@ -210,23 +220,20 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
     setDialogOpen(false);
 
     try {
-      let result;
-
       if (dialogType === "verify") {
-        result = await verifyUser(selectedUser._id);
+        // For verify, redirect to the form page
+        router.push(`/dashboard/registry/verify/${selectedUser._id}`);
       } else {
-        result = await renewUserCard(selectedUser._id);
-      }
+        // For renew, call the renew API
+        const result = await renewUserCard(selectedUser._id);
 
-      if (result.success) {
-        toast.success(
-          result.message ||
-            `User ${dialogType === "verify" ? "verified" : "card renewed"} successfully`,
-        );
-        // Refresh the page data
-        window.location.reload();
-      } else {
-        toast.error(result.error || `Failed to ${dialogType} user`);
+        if (result.success) {
+          toast.success(result.message || "Card renewed successfully");
+          // Refresh the page data
+          window.location.reload();
+        } else {
+          toast.error(result.error || "Failed to renew card");
+        }
       }
     } catch (error) {
       toast.error("An unexpected error occurred");
@@ -241,14 +248,14 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
     if (!selectedUser) return "";
 
     if (dialogType === "verify") {
-      return `Are you sure you want to verify ${getFullName(selectedUser)}? This will create and activate their PWD card.`;
+      return `You are about to start the verification process for ${getFullName(selectedUser)}. You will be redirected to the application form to complete their PWD card details.`;
     }
 
     return `Are you sure you want to renew the PWD card for ${getFullName(selectedUser)}? The card validity will be extended for another 3 years.`;
   };
 
   const getDialogTitle = () => {
-    if (dialogType === "verify") return "Verify User";
+    if (dialogType === "verify") return "Start Verification Process";
     return "Renew PWD Card";
   };
 
@@ -480,9 +487,7 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
 
                       <TableCell>
                         <div className="flex items-center justify-center gap-2">
-                          {/* ──────────────────────────────────────────────── */}
-                          {/*               FIXED VERIFY BUTTON                */}
-                          {/* ──────────────────────────────────────────────── */}
+                          {/* Verify Button - Opens Confirmation Modal */}
                           <Button
                             variant="outline"
                             size="sm"
@@ -502,14 +507,14 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
                               isVerified
                                 ? "User is already verified"
                                 : isLoading
-                                  ? "Verification in progress..."
-                                  : "Verify user and create/activate PWD card"
+                                  ? "Loading..."
+                                  : "Start verification process"
                             }
                           >
                             {isLoading ? (
                               <>
                                 <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                                Verifying...
+                                Loading...
                               </>
                             ) : (
                               <>
@@ -519,7 +524,7 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
                             )}
                           </Button>
 
-                          {/* Renew Button - unchanged */}
+                          {/* Renew Button */}
                           <Button
                             variant="outline"
                             size="sm"
@@ -570,7 +575,7 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
         </div>
       )}
 
-      {/* Confirmation Dialog */}
+      {/* Confirmation Dialog - For both Verify and Renew */}
       <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -589,7 +594,7 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
                   : "bg-green-600 hover:bg-green-700"
               }
             >
-              Confirm
+              {dialogType === "verify" ? "Continue to Form" : "Confirm Renew"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
