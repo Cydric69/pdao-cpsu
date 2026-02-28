@@ -296,13 +296,14 @@ export default function FaceVerification({
     );
     const dateIssued = issuedMatch ? issuedMatch[1].replace(/\s/g, "") : "";
 
-    // Blood type — handles all 8 types: A+, A-, B+, B-, AB+, AB-, O+, O-
-    // Also handles no-sign variants: A, B, AB, O
-    // OCR quirks handled: underscores as separators, space between letter and +/-,
-    // value on same line or next line, lookbehind avoids  failing on underscores
+    // Blood type — all 8 types: A+, A-, B+, B-, AB+, AB-, O+, O-
+    // Root cause of + failing: negative lookahead (?![A-Za-z0-9]) blocks capture
+    // when Tesseract outputs "O+IN" with no space before next word.
+    // Fix: remove lookahead entirely — just greedily capture + or - after the letter.
+    // Also handles: lowercase (o+), space between letter and sign (O +), underscores.
     let bloodType = "";
     const BT_RE =
-      /BLOOD\s*TYPE[\s\S]{0,20}?(?<![A-Za-z])(AB|[ABO])\s*([+-])?(?![A-Za-z])/i;
+      /BLOOD\s*TYPE[\s\S]{0,20}?(?<![A-Za-z])(AB|[ABO])\s*([+\-])?/i;
     const btMatch = text.match(BT_RE);
     if (btMatch) {
       bloodType = (btMatch[1] + (btMatch[2] ?? "")).toUpperCase();
