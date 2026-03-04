@@ -30,12 +30,17 @@ function verifyToken(token: string, secret: string): TokenPayload | null {
   }
 }
 
-// Renamed from "middleware" to "proxy"
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Define public and protected routes
-  const publicRoutes = ["/", "/login", "/register", "/api/auth"];
+  // Allow mobile-verify page without cookie auth (it uses localStorage)
+  const publicRoutes = [
+    "/",
+    "/login",
+    "/register",
+    "/api/auth",
+    "/mobile-verify",
+  ];
   const protectedRoutes = [
     "/dashboard",
     "/profile",
@@ -50,7 +55,9 @@ export async function proxy(request: NextRequest) {
 
   // Check if route is public or static file
   const isPublicRoute =
-    publicRoutes.includes(pathname) ||
+    publicRoutes.some(
+      (route) => pathname === route || pathname.startsWith(route + "/"),
+    ) ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/public") ||
     pathname.includes(".ico") ||
@@ -140,15 +147,13 @@ export async function proxy(request: NextRequest) {
   return response;
 }
 
-// You can also export as default
-// export default proxy;
-
-// Configure middleware to run on specific paths
 export const config = {
   matcher: [
     "/dashboard/:path*",
     "/profile/:path*",
     "/settings/:path*",
     "/api/protected/:path*",
+    // Explicitly exclude mobile-verify from protection
+    "/((?!mobile-verify|_next/static|_next/image|favicon.ico).*)",
   ],
 };

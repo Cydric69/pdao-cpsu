@@ -1,4 +1,4 @@
-// components/face/FaceVerification.tsx
+// components/face/FaceVerificationMobile.tsx
 "use client";
 
 import { useState, useRef, useEffect } from "react";
@@ -13,6 +13,7 @@ import {
   ScanLine,
   RefreshCw,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,6 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import * as faceapi from "face-api.js";
 import { createWorker } from "tesseract.js";
-import DigitalPWDCard from "@/components/face/DigitalPWDCard";
 
 // Extend Window interface to include ReactNativeWebView
 declare global {
@@ -43,12 +43,27 @@ declare global {
 const isReactNative =
   typeof window !== "undefined" && window.ReactNativeWebView !== undefined;
 
+// Safe postMessage function
+const postMessageToReactNative = (message: any) => {
+  if (isReactNative && window.ReactNativeWebView) {
+    window.ReactNativeWebView.postMessage(JSON.stringify(message));
+  }
+};
+
+// Get Express JWT token from localStorage
+const getExpressToken = (): string | null => {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("express_jwt_token");
+  }
+  return null;
+};
+
 interface ExtractedData {
   card_id: string;
   name: string;
   barangay: string;
   type_of_disability: string;
-  address: string;  
+  address: string;
   date_of_birth: string;
   sex: string;
   blood_type: string;
@@ -60,7 +75,7 @@ interface ExtractedData {
 
 type Step = "idle" | "processing-id" | "processing-face" | "verifying" | "done";
 
-export default function FaceVerification() {
+export default function FaceVerificationMobile() {
   const [step, setStep] = useState<Step>("idle");
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [modelLoadProgress, setModelLoadProgress] = useState(0);
@@ -104,16 +119,21 @@ export default function FaceVerification() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Check for Express token on mount
+  useEffect(() => {
+    const token = getExpressToken();
+    if (token) {
+      console.log("✅ Express JWT token found in localStorage");
+      // You could verify the token with your backend here
+    }
+  }, []);
+
   // Notify React Native when ready
   useEffect(() => {
-    if (isReactNative && window.ReactNativeWebView) {
-      window.ReactNativeWebView.postMessage(
-        JSON.stringify({
-          type: "WEBVIEW_READY",
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    }
+    postMessageToReactNative({
+      type: "WEBVIEW_READY",
+      timestamp: new Date().toISOString(),
+    });
   }, []);
 
   // ── Load face-api models ──────────────────────────────────────────────────
@@ -134,6 +154,11 @@ export default function FaceVerification() {
           ...p,
           models: "Failed to load face detection models",
         }));
+
+        postMessageToReactNative({
+          type: "ERROR",
+          message: "Failed to load face detection models",
+        });
       }
     };
     loadModels();
@@ -146,7 +171,7 @@ export default function FaceVerification() {
     };
   }, [stream]);
 
-  // OCR helpers (same as before)
+  // OCR helpers
   const cleanTrailing = (str: string): string =>
     str
       .replace(/[\|\[\]{}\\\/]+/g, "")
@@ -625,19 +650,15 @@ export default function FaceVerification() {
     setVerificationResult(result);
 
     // Send result to React Native if in WebView
-    if (isReactNative && window.ReactNativeWebView) {
-      window.ReactNativeWebView.postMessage(
-        JSON.stringify({
-          type: "VERIFICATION_COMPLETE",
-          result: {
-            success: isMatch,
-            matchScore,
-            distance,
-            extractedData: combined,
-          },
-        }),
-      );
-    }
+    postMessageToReactNative({
+      type: "VERIFICATION_COMPLETE",
+      result: {
+        success: isMatch,
+        matchScore,
+        distance,
+        extractedData: combined,
+      },
+    });
 
     setStep("done");
   };
@@ -663,10 +684,26 @@ export default function FaceVerification() {
     step === "processing-id" ||
     step === "processing-face" ||
     step === "verifying";
-  const allData: Partial<ExtractedData> = { ...idFrontData, ...idBackData };
+
+  const expiry = calculateExpiry(idBackData?.date_issued ?? "");
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {/* Close button for mobile */}
+      {isReactNative && (
+        <div className="flex justify-end">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              postMessageToReactNative({ type: "CLOSE" });
+            }}
+          >
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+      )}
+
       {/* Model Loading */}
       {!modelsLoaded && (
         <Card className="border-blue-200 bg-blue-50">
@@ -681,21 +718,20 @@ export default function FaceVerification() {
 
       {/* STEP 1: ID Front */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <IdCard className="h-5 w-5 text-green-600" />
-            Step 1: Upload PWD ID — Front
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <IdCard className="h-4 w-4 text-green-600" />
+            Step 1: Upload ID Front
           </CardTitle>
-          <CardDescription>
-            Upload the front side. The system will extract the photo and basic
-            info (name, barangay, disability type, card ID).
+          <CardDescription className="text-xs">
+            Upload the front side to extract name, barangay, and disability
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-start gap-4">
+        <CardContent className="space-y-3">
+          <div className="flex items-start gap-3">
             <div
               onClick={() => idFrontRef.current?.click()}
-              className="relative h-44 w-72 flex-shrink-0 cursor-pointer overflow-hidden rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 transition-colors hover:border-green-500 hover:bg-green-50"
+              className="relative h-32 w-48 flex-shrink-0 cursor-pointer overflow-hidden rounded-lg border-2 border-dashed border-gray-300 bg-gray-50"
             >
               {idFrontImage ? (
                 <Image
@@ -705,34 +741,37 @@ export default function FaceVerification() {
                   className="object-contain"
                 />
               ) : (
-                <div className="flex h-full flex-col items-center justify-center gap-2 text-gray-400">
-                  <IdCard className="h-10 w-10" />
-                  <span className="text-xs">Click to upload ID front</span>
+                <div className="flex h-full flex-col items-center justify-center gap-1 text-gray-400">
+                  <IdCard className="h-8 w-8" />
+                  <span className="text-xs">Tap to upload</span>
                 </div>
               )}
             </div>
 
-            <div className="flex flex-col gap-3">
+            <div className="flex-1">
               <input
                 ref={idFrontRef}
                 type="file"
                 accept="image/*"
+                capture="environment"
                 onChange={handleIdFrontUpload}
                 className="hidden"
               />
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 onClick={() => idFrontRef.current?.click()}
                 disabled={!modelsLoaded || isProcessing}
+                className="w-full"
               >
-                <Upload className="mr-2 h-4 w-4" />
-                Choose ID Front Image
+                <Upload className="mr-2 h-3 w-3" />
+                Choose Image
               </Button>
 
               {extractedFaceFromId && (
-                <div className="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-2">
-                  <div className="relative h-14 w-14 overflow-hidden rounded-lg border border-green-300">
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="relative h-10 w-10 overflow-hidden rounded-full border border-green-300">
                     <Image
                       src={extractedFaceFromId}
                       alt="ID Face"
@@ -740,46 +779,43 @@ export default function FaceVerification() {
                       className="object-cover"
                     />
                   </div>
-                  <div>
-                    <Badge className="bg-green-100 text-green-800">
-                      Face Extracted ✓
-                    </Badge>
-                    <p className="mt-1 text-xs text-gray-500">
-                      Photo found on ID card
-                    </p>
-                  </div>
+                  <Badge className="bg-green-100 text-green-800 text-[10px]">
+                    Face Detected
+                  </Badge>
                 </div>
               )}
             </div>
           </div>
 
           {errors.idFront && (
-            <Alert variant="destructive">
-              <AlertDescription>{errors.idFront}</AlertDescription>
+            <Alert variant="destructive" className="py-2">
+              <AlertDescription className="text-xs">
+                {errors.idFront}
+              </AlertDescription>
             </Alert>
           )}
 
           {idFrontData && (
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Extracted from Front
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+                Extracted Info
               </p>
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+              <dl className="grid grid-cols-2 gap-1 text-xs">
                 <dt className="text-gray-500">Card ID</dt>
                 <dd className="font-medium text-gray-900">
-                  {idFrontData.card_id || "Not found"}
+                  {idFrontData.card_id || "—"}
                 </dd>
                 <dt className="text-gray-500">Name</dt>
                 <dd className="font-medium text-gray-900">
-                  {idFrontData.name || "Not found"}
+                  {idFrontData.name || "—"}
                 </dd>
                 <dt className="text-gray-500">Barangay</dt>
                 <dd className="font-medium text-gray-900">
-                  {idFrontData.barangay || "Not found"}
+                  {idFrontData.barangay || "—"}
                 </dd>
                 <dt className="text-gray-500">Disability</dt>
                 <dd className="font-medium text-gray-900">
-                  {idFrontData.type_of_disability || "Not found"}
+                  {idFrontData.type_of_disability || "—"}
                 </dd>
               </dl>
             </div>
@@ -789,21 +825,20 @@ export default function FaceVerification() {
 
       {/* STEP 2: ID Back */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ScanLine className="h-5 w-5 text-blue-600" />
-            Step 2: Upload PWD ID — Back
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ScanLine className="h-4 w-4 text-blue-600" />
+            Step 2: Upload ID Back
           </CardTitle>
-          <CardDescription>
-            Upload the back side to extract address, date of birth, blood type,
-            and emergency contact details.
+          <CardDescription className="text-xs">
+            Upload the back side for address, DOB, and emergency contact
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-start gap-4">
+        <CardContent className="space-y-3">
+          <div className="flex items-start gap-3">
             <div
               onClick={() => idBackRef.current?.click()}
-              className="relative h-44 w-72 flex-shrink-0 cursor-pointer overflow-hidden rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 transition-colors hover:border-blue-500 hover:bg-blue-50"
+              className="relative h-32 w-48 flex-shrink-0 cursor-pointer overflow-hidden rounded-lg border-2 border-dashed border-gray-300 bg-gray-50"
             >
               {idBackImage ? (
                 <Image
@@ -813,9 +848,9 @@ export default function FaceVerification() {
                   className="object-contain"
                 />
               ) : (
-                <div className="flex h-full flex-col items-center justify-center gap-2 text-gray-400">
-                  <ScanLine className="h-10 w-10" />
-                  <span className="text-xs">Click to upload ID back</span>
+                <div className="flex h-full flex-col items-center justify-center gap-1 text-gray-400">
+                  <ScanLine className="h-8 w-8" />
+                  <span className="text-xs">Tap to upload</span>
                 </div>
               )}
             </div>
@@ -825,53 +860,66 @@ export default function FaceVerification() {
                 ref={idBackRef}
                 type="file"
                 accept="image/*"
+                capture="environment"
                 onChange={handleIdBackUpload}
                 className="hidden"
               />
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 onClick={() => idBackRef.current?.click()}
                 disabled={isProcessing}
+                className="w-full"
               >
-                <Upload className="mr-2 h-4 w-4" />
-                Choose ID Back Image
+                <Upload className="mr-2 h-3 w-3" />
+                Choose
               </Button>
             </div>
           </div>
 
           {errors.idBack && (
-            <Alert variant="destructive">
-              <AlertDescription>{errors.idBack}</AlertDescription>
+            <Alert variant="destructive" className="py-2">
+              <AlertDescription className="text-xs">
+                {errors.idBack}
+              </AlertDescription>
             </Alert>
           )}
 
           {idBackData && (
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Extracted from Back
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+                Extracted Info
               </p>
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+              <dl className="grid grid-cols-2 gap-1 text-xs">
                 <dt className="text-gray-500">Address</dt>
-                <dd className="font-medium text-gray-900 col-span-1">
-                  {idBackData.address || "Not found"}
-                </dd>
-                <dt className="text-gray-500">Date of Birth</dt>
                 <dd className="font-medium text-gray-900">
-                  {idBackData.date_of_birth || "Not found"}
+                  {idBackData.address || "—"}
+                </dd>
+                <dt className="text-gray-500">DOB</dt>
+                <dd className="font-medium text-gray-900">
+                  {idBackData.date_of_birth || "—"}
                 </dd>
                 <dt className="text-gray-500">Sex</dt>
                 <dd className="font-medium text-gray-900">
-                  {idBackData.sex || "Not found"}
+                  {idBackData.sex || "—"}
                 </dd>
                 <dt className="text-gray-500">Blood Type</dt>
                 <dd className="font-medium text-gray-900">
-                  {idBackData.blood_type || "Not found"}
+                  {idBackData.blood_type || "—"}
                 </dd>
                 <dt className="text-gray-500">Date Issued</dt>
                 <dd className="font-medium text-gray-900">
-                  {idBackData.date_issued || "Not found"}
+                  {idBackData.date_issued || "—"}
                 </dd>
+                {expiry && (
+                  <>
+                    <dt className="text-gray-500">Expiry</dt>
+                    <dd className="font-medium text-gray-900">
+                      {expiry.expiryStr}
+                    </dd>
+                  </>
+                )}
               </dl>
             </div>
           )}
@@ -880,21 +928,20 @@ export default function FaceVerification() {
 
       {/* STEP 3: Live Face */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Camera className="h-5 w-5 text-purple-600" />
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Camera className="h-4 w-4 text-purple-600" />
             Step 3: Capture Live Face
           </CardTitle>
-          <CardDescription>
-            Take a photo or upload an image of the person's face for
-            verification against the ID photo.
+          <CardDescription className="text-xs">
+            Take a selfie or upload a photo for verification
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3">
           {cameraActive && (
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div
-                className="relative overflow-hidden rounded-xl bg-black"
+                className="relative overflow-hidden rounded-lg bg-black"
                 style={{ aspectRatio: "4/3" }}
               >
                 <video
@@ -904,16 +951,17 @@ export default function FaceVerification() {
                   className="h-full w-full object-cover"
                 />
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="h-48 w-36 rounded-full border-2 border-dashed border-white/60" />
+                  <div className="h-32 w-24 rounded-full border-2 border-dashed border-white/60" />
                 </div>
               </div>
               <div className="flex gap-2">
                 <Button
                   onClick={captureFromCamera}
+                  size="sm"
                   className="flex-1 bg-purple-600 hover:bg-purple-700"
                 >
-                  <Camera className="mr-2 h-4 w-4" />
-                  Capture Photo
+                  <Camera className="mr-1 h-3 w-3" />
+                  Capture
                 </Button>
                 <Button
                   onClick={() => {
@@ -922,6 +970,7 @@ export default function FaceVerification() {
                     setCameraActive(false);
                   }}
                   variant="outline"
+                  size="sm"
                 >
                   Cancel
                 </Button>
@@ -930,10 +979,10 @@ export default function FaceVerification() {
           )}
 
           {!cameraActive && (
-            <div className="flex items-start gap-4">
+            <div className="flex items-start gap-3">
               <div
                 onClick={() => liveFileRef.current?.click()}
-                className="relative h-44 w-44 flex-shrink-0 cursor-pointer overflow-hidden rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 transition-colors hover:border-purple-500 hover:bg-purple-50"
+                className="relative h-32 w-32 flex-shrink-0 cursor-pointer overflow-hidden rounded-lg border-2 border-dashed border-gray-300 bg-gray-50"
               >
                 {liveImage ? (
                   <Image
@@ -943,41 +992,46 @@ export default function FaceVerification() {
                     className="object-cover"
                   />
                 ) : (
-                  <div className="flex h-full flex-col items-center justify-center gap-2 text-gray-400">
-                    <User className="h-10 w-10" />
-                    <span className="text-xs text-center">Click to upload</span>
+                  <div className="flex h-full flex-col items-center justify-center gap-1 text-gray-400">
+                    <User className="h-8 w-8" />
+                    <span className="text-xs text-center">Tap to upload</span>
                   </div>
                 )}
               </div>
 
-              <div className="flex flex-col gap-2">
+              <div className="flex-1 space-y-2">
                 <input
                   ref={liveFileRef}
                   type="file"
                   accept="image/*"
+                  capture="user"
                   onChange={handleLiveFaceUpload}
                   className="hidden"
                 />
                 <Button
                   type="button"
                   variant="outline"
+                  size="sm"
                   onClick={() => liveFileRef.current?.click()}
                   disabled={!modelsLoaded || isProcessing}
+                  className="w-full"
                 >
-                  <Upload className="mr-2 h-4 w-4" />
-                  Upload Photo
+                  <Upload className="mr-2 h-3 w-3" />
+                  Upload
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
+                  size="sm"
                   onClick={startCamera}
                   disabled={!modelsLoaded || isProcessing}
+                  className="w-full"
                 >
-                  <Camera className="mr-2 h-4 w-4" />
-                  Use Camera
+                  <Camera className="mr-2 h-3 w-3" />
+                  Camera
                 </Button>
                 {liveFaceDescriptor && (
-                  <Badge className="bg-purple-100 text-purple-800">
+                  <Badge className="bg-purple-100 text-purple-800 text-[10px] w-full justify-center">
                     Face Detected ✓
                   </Badge>
                 )}
@@ -986,8 +1040,10 @@ export default function FaceVerification() {
           )}
 
           {errors.liveface && (
-            <Alert variant="destructive">
-              <AlertDescription>{errors.liveface}</AlertDescription>
+            <Alert variant="destructive" className="py-2">
+              <AlertDescription className="text-xs">
+                {errors.liveface}
+              </AlertDescription>
             </Alert>
           )}
 
@@ -997,12 +1053,12 @@ export default function FaceVerification() {
 
       {/* Processing indicator */}
       {isProcessing && (
-        <div className="flex items-center justify-center gap-3 rounded-xl border border-amber-200 bg-amber-50 py-4">
-          <Loader2 className="h-5 w-5 animate-spin text-amber-600" />
-          <span className="text-sm font-medium text-amber-700">
-            {step === "processing-id" && "Scanning ID card…"}
-            {step === "processing-face" && "Detecting face…"}
-            {step === "verifying" && "Comparing faces…"}
+        <div className="flex items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 py-2">
+          <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
+          <span className="text-xs font-medium text-amber-700">
+            {step === "processing-id" && "Scanning ID..."}
+            {step === "processing-face" && "Detecting face..."}
+            {step === "verifying" && "Comparing faces..."}
           </span>
         </div>
       )}
@@ -1016,16 +1072,16 @@ export default function FaceVerification() {
               : "border-red-300 bg-red-50"
           }
         >
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
+          <CardContent className="pt-4">
+            <div className="flex items-center gap-3">
               {verificationResult.success ? (
-                <CheckCircle className="h-10 w-10 flex-shrink-0 text-green-600" />
+                <CheckCircle className="h-8 w-8 text-green-600" />
               ) : (
-                <XCircle className="h-10 w-10 flex-shrink-0 text-red-600" />
+                <XCircle className="h-8 w-8 text-red-600" />
               )}
               <div className="flex-1">
                 <p
-                  className={`text-lg font-semibold ${
+                  className={`text-sm font-semibold ${
                     verificationResult.success
                       ? "text-green-800"
                       : "text-red-800"
@@ -1033,153 +1089,32 @@ export default function FaceVerification() {
                 >
                   {verificationResult.message}
                 </p>
-                <div className="mt-2 flex items-center gap-4">
-                  <div>
-                    <p className="text-xs text-gray-500">Match Score</p>
-                    <p className="text-2xl font-bold text-gray-900">
-                      {(verificationResult.matchScore * 100).toFixed(1)}%
-                    </p>
-                  </div>
-                  <div className="flex-1">
-                    <Progress
-                      value={verificationResult.matchScore * 100}
-                      className={`h-3 ${
-                        verificationResult.success
-                          ? "[&>div]:bg-green-500"
-                          : "[&>div]:bg-red-500"
-                      }`}
-                    />
-                  </div>
-                </div>
-                <p className="mt-1 text-xs text-gray-500">
-                  Distance: {verificationResult.distance.toFixed(4)} (threshold:
-                  0.55)
+                <p className="text-xs text-gray-600">
+                  Match: {(verificationResult.matchScore * 100).toFixed(1)}%
+                </p>
+                <p className="text-[10px] text-gray-500">
+                  Distance: {verificationResult.distance.toFixed(4)}
                 </p>
               </div>
             </div>
-
-            {extractedFaceFromId && liveImage && (
-              <div className="mt-4 flex items-center gap-4">
-                <div className="text-center">
-                  <div className="relative h-20 w-20 overflow-hidden rounded-lg border-2 border-gray-300">
-                    <Image
-                      src={extractedFaceFromId}
-                      alt="ID Face"
-                      fill
-                      className="object-cover"
-                    />
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">ID Photo</p>
-                </div>
-                <div
-                  className={`text-2xl font-bold ${
-                    verificationResult.success
-                      ? "text-green-600"
-                      : "text-red-500"
-                  }`}
-                >
-                  {verificationResult.success ? "≈" : "≠"}
-                </div>
-                <div className="text-center">
-                  <div className="relative h-20 w-20 overflow-hidden rounded-lg border-2 border-gray-300">
-                    <Image
-                      src={liveImage}
-                      alt="Live Face"
-                      fill
-                      className="object-cover"
-                    />
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">Live Photo</p>
-                </div>
-              </div>
-            )}
           </CardContent>
         </Card>
       )}
 
-      {/* ── Digital PWD Card ── */}
-      {(idFrontData || idBackData) && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
-              Digital PWD ID Preview
-            </h3>
-            {verificationResult && (
-              <span
-                className={`text-xs font-bold px-2 py-1 rounded-full ${
-                  verificationResult.success
-                    ? "bg-green-100 text-green-700"
-                    : "bg-red-100 text-red-700"
-                }`}
-              >
-                {verificationResult.success ? "✓ Verified" : "✗ Unverified"}
-              </span>
-            )}
-          </div>
-
-          {/* Front */}
-          <div>
-            <p className="mb-1 text-xs text-gray-400 uppercase tracking-wider">
-              Front
-            </p>
-            <DigitalPWDCard
-              data={{
-                card_id: idFrontData?.card_id || "",
-                name: idFrontData?.name || "",
-                barangay: idFrontData?.barangay || "",
-                type_of_disability: idFrontData?.type_of_disability || "",
-                address: idBackData?.address || "",
-                date_of_birth: idBackData?.date_of_birth || "",
-                sex: idBackData?.sex || "",
-                blood_type: idBackData?.blood_type || "",
-                date_issued: idBackData?.date_issued || "",
-                emergency_contact_name:
-                  idBackData?.emergency_contact_name || "",
-                emergency_contact_number:
-                  idBackData?.emergency_contact_number || "",
-                face_image_url: extractedFaceFromId,
-              }}
-            />
-          </div>
-
-          {/* Back */}
-          {idBackData && (
-            <div>
-              <p className="mb-1 text-xs text-gray-400 uppercase tracking-wider">
-                Back
-              </p>
-              <DigitalPWDCard
-                showBack
-                data={{
-                  card_id: idFrontData?.card_id || "",
-                  name: idFrontData?.name || "",
-                  barangay: idFrontData?.barangay || "",
-                  type_of_disability: idFrontData?.type_of_disability || "",
-                  address: idBackData?.address || "",
-                  date_of_birth: idBackData?.date_of_birth || "",
-                  sex: idBackData?.sex || "",
-                  blood_type: idBackData?.blood_type || "",
-                  date_issued: idBackData?.date_issued || "",
-                  emergency_contact_name:
-                    idBackData?.emergency_contact_name || "",
-                  emergency_contact_number:
-                    idBackData?.emergency_contact_number || "",
-                  face_image_url: extractedFaceFromId,
-                }}
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Action Buttons ── */}
-      <div className="flex justify-end gap-3">
-        <Button variant="outline" onClick={reset} disabled={isProcessing}>
-          <RefreshCw className="mr-2 h-4 w-4" />
+      {/* Action Buttons */}
+      <div className="flex justify-end gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={reset}
+          disabled={isProcessing}
+        >
+          <RefreshCw className="mr-1 h-3 w-3" />
           Reset
         </Button>
         <Button
           onClick={handleVerify}
+          size="sm"
           disabled={
             !idFaceDescriptor ||
             !liveFaceDescriptor ||
@@ -1190,13 +1125,13 @@ export default function FaceVerification() {
         >
           {step === "verifying" ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Verifying…
+              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              Verifying...
             </>
           ) : (
             <>
-              <ShieldCheck className="mr-2 h-4 w-4" />
-              Verify Face Match
+              <ShieldCheck className="mr-1 h-3 w-3" />
+              Verify
             </>
           )}
         </Button>
