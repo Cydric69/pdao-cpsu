@@ -6,15 +6,12 @@ import { UserTable } from "@/components/registry/user-table";
 import { Card } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 import { UserPublic } from "@/models/User";
+import { CreateUserDialog } from "@/components/registry/create-user-dialog";
 
 export default function RegistryPage() {
   const [users, setUsers] = useState<UserPublic[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchUsers();
-  }, []);
 
   const fetchUsers = async () => {
     try {
@@ -32,6 +29,10 @@ export default function RegistryPage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
 
   if (loading) {
     return (
@@ -59,8 +60,11 @@ export default function RegistryPage() {
     <div className="container mx-auto py-6 space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold">User Registry</h1>
-        <div className="text-sm text-muted-foreground">
-          Total Users: {users.length}
+        <div className="flex items-center gap-4">
+          <div className="text-sm text-muted-foreground">
+            Total Users: {users.length}
+          </div>
+          <CreateUserDialog onUserCreated={fetchUsers} />
         </div>
       </div>
 

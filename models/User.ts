@@ -1,208 +1,24 @@
+// ⚠️ SERVER ONLY — never import this in Client Components
+// Client components should import from "@/types/user"
+
 import bcrypt from "bcryptjs";
 import mongoose, { Document, Schema } from "mongoose";
-import { z } from "zod";
-import { IUser } from "@/types/user";
+import {
+  IUser,
+  UserSchema,
+  UserRegisterSchema,
+  UserUpdateSchema,
+  UserLoginSchema,
+  UserPublicSchema,
+  type User,
+  type UserRegister,
+  type UserUpdate,
+  type UserLogin,
+  type UserPublic,
+} from "@/types/user";
 
-// ============ ZOD SCHEMAS ============
-
-// Address Zod Schema
-export const AddressSchema = z.object({
-  street: z.string().min(1, "Street is required").max(200),
-  barangay: z.string().min(1, "Barangay is required").max(100),
-  city_municipality: z
-    .string()
-    .min(1, "City/Municipality is required")
-    .max(100),
-  province: z.string().min(1, "Province is required").max(100),
-  region: z.string().min(1, "Region is required").max(100),
-  zip_code: z
-    .string()
-    .regex(/^\d{4}$/, "ZIP code must be 4 digits")
-    .optional()
-    .default(""),
-  country: z.string().default("Philippines"),
-  type: z.enum(["Permanent", "Temporary", "Present"]).default("Permanent"),
-  coordinates: z
-    .object({
-      lat: z.number().min(-90).max(90).optional(),
-      lng: z.number().min(-180).max(180).optional(),
-    })
-    .optional(),
-});
-
-// Main User Zod Schema
-export const UserSchema = z.object({
-  _id: z.any().optional(),
-
-  user_id: z
-    .string()
-    .regex(/^PDAO-\d{8}-[A-Z0-9]{5}$/, "Invalid user ID format")
-    .optional()
-    .default(() => {
-      const date = new Date();
-      const dateStr = date.toISOString().split("T")[0].replace(/-/g, "");
-      const random = Math.random().toString(36).substring(2, 7).toUpperCase();
-      return `PDAO-${dateStr}-${random}`;
-    }),
-
-  form_id: z
-    .string()
-    .regex(/^FORM-\d{8}-[A-Z0-9]{5}$/, "Invalid form ID format")
-    .optional()
-    .nullable()
-    .default(null),
-
-  // PWD Card fields - only in User model
-  pwd_issued_id: z
-    .string()
-    .regex(
-      /^\d{2}-\d{4}-\d{3}-\d{7}$/,
-      "Invalid PWD ID format (XX-XXXX-XXX-XXXXXXX)",
-    )
-    .optional()
-    .nullable()
-    .default(null),
-
-  card_id: z
-    .string()
-    .regex(/^CARD-\d{6}$/, "Invalid card ID format (CARD-######)")
-    .optional()
-    .nullable()
-    .default(null),
-
-  first_name: z
-    .string()
-    .min(1, "First name is required")
-    .max(50, "First name cannot exceed 50 characters"),
-
-  middle_name: z
-    .string()
-    .max(50, "Middle name cannot exceed 50 characters")
-    .optional()
-    .default(""),
-
-  last_name: z
-    .string()
-    .min(1, "Last name is required")
-    .max(50, "Last name cannot exceed 50 characters"),
-
-  suffix: z
-    .enum(["Jr.", "Sr.", "II", "III", "IV", "V", ""])
-    .optional()
-    .default(""),
-
-  sex: z.enum(["Male", "Female", "Other"]).default("Other"),
-
-  age: z
-    .number()
-    .int("Age must be an integer")
-    .min(0, "Age cannot be negative")
-    .max(150, "Age cannot exceed 150")
-    .optional()
-    .default(0),
-
-  date_of_birth: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
-    .refine((date) => {
-      const dob = new Date(date);
-      return dob <= new Date();
-    }, "Date of birth cannot be in the future"),
-
-  address: AddressSchema,
-
-  contact_number: z
-    .string()
-    .min(11, "Phone number must be 11 characters (09XXXXXXXXX)")
-    .max(11, "Phone number must be 11 characters (09XXXXXXXXX)")
-    .regex(
-      /^09\d{9}$/,
-      "Phone number must start with 09 and have 11 digits total",
-    ),
-
-  avatar_url: z
-    .string()
-    .url("Invalid URL format")
-    .optional()
-    .nullable()
-    .default(null),
-
-  email: z
-    .string()
-    .email("Invalid email format")
-    .max(100, "Email cannot exceed 100 characters"),
-
-  password: z
-    .string()
-    .min(8, "Password must be at least 8 characters")
-    .max(100, "Password cannot exceed 100 characters"),
-
-  role: z.enum(["User", "Admin", "Supervisor", "Staff"]).default("User"),
-
-  status: z
-    .enum(["Active", "Inactive", "Suspended", "Pending"])
-    .default("Pending"),
-
-  is_verified: z.boolean().default(false),
-  is_email_verified: z.boolean().default(false),
-
-  created_by: z.string().optional().nullable().default(null),
-  updated_by: z.string().optional().nullable().default(null),
-});
-
-// Registration Schema
-export const UserRegisterSchema = UserSchema.pick({
-  first_name: true,
-  middle_name: true,
-  last_name: true,
-  suffix: true,
-  sex: true,
-  date_of_birth: true,
-  address: true,
-  contact_number: true,
-  email: true,
-  password: true,
-});
-
-export const UserLoginSchema = z.object({
-  email: z.string().email("Invalid email format"),
-  password: z.string().min(1, "Password is required"),
-});
-
-export const UserUpdateSchema = UserSchema.partial()
-  .omit({
-    password: true,
-    user_id: true,
-    form_id: true,
-    pwd_issued_id: true,
-    card_id: true,
-  })
-  .extend({
-    current_password: z.string().optional(),
-    new_password: z
-      .string()
-      .min(8, "New password must be at least 8 characters")
-      .max(100, "New password cannot exceed 100 characters")
-      .optional(),
-  });
-
-export const UserPublicSchema = UserSchema.omit({
-  password: true,
-  created_by: true,
-  updated_by: true,
-}).extend({
-  full_name: z.string().optional(),
-  age_display: z.string().optional(),
-  is_pwd_verified: z.boolean().optional(),
-});
-
-// ============ TYPES ============
-export type User = z.infer<typeof UserSchema>;
-export type UserRegister = z.infer<typeof UserRegisterSchema>;
-export type UserLogin = z.infer<typeof UserLoginSchema>;
-export type UserUpdate = z.infer<typeof UserUpdateSchema>;
-export type UserPublic = z.infer<typeof UserPublicSchema>;
-export type Address = z.infer<typeof AddressSchema>;
+// Re-export everything so existing imports from "@/models/User" keep working
+export * from "@/types/user";
 
 // ============ MONGOOSE DOCUMENT INTERFACE ============
 export interface IUserDocument extends IUser, Document {
@@ -216,14 +32,15 @@ const UserMongooseSchema = new Schema<IUserDocument>(
       type: String,
       required: true,
       unique: true,
-      default: function () {
-        const date = new Date();
-        const dateStr = date.toISOString().split("T")[0].replace(/-/g, "");
+      default: () => {
+        const dateStr = new Date()
+          .toISOString()
+          .split("T")[0]
+          .replace(/-/g, "");
         const random = Math.random().toString(36).substring(2, 7).toUpperCase();
         return `PDAO-${dateStr}-${random}`;
       },
     },
-
     form_id: {
       type: String,
       required: false,
@@ -231,8 +48,6 @@ const UserMongooseSchema = new Schema<IUserDocument>(
       sparse: false,
       default: null,
     },
-
-    // PWD Card fields - only in User model
     pwd_issued_id: {
       type: String,
       required: false,
@@ -240,14 +55,10 @@ const UserMongooseSchema = new Schema<IUserDocument>(
       sparse: true,
       default: null,
       validate: {
-        validator: function (v: string) {
-          if (!v) return true;
-          return /^\d{2}-\d{4}-\d{3}-\d{7}$/.test(v);
-        },
+        validator: (v: string) => !v || /^\d{2}-\d{4}-\d{3}-\d{7}$/.test(v),
         message: "PWD issued ID must be in format: 00-0000-000-0000000",
       },
     },
-
     card_id: {
       type: String,
       required: false,
@@ -255,51 +66,24 @@ const UserMongooseSchema = new Schema<IUserDocument>(
       sparse: true,
       default: null,
       validate: {
-        validator: function (v: string) {
-          if (!v) return true;
-          return /^CARD-\d{6}$/.test(v);
-        },
+        validator: (v: string) => !v || /^CARD-\d{6}$/.test(v),
         message: "Card ID must be in format: CARD-######",
       },
     },
-
-    first_name: {
-      type: String,
-      required: [true, "First name is required"],
-    },
-
-    middle_name: {
-      type: String,
-      default: "",
-    },
-
-    last_name: {
-      type: String,
-      required: [true, "Last name is required"],
-    },
-
+    first_name: { type: String, required: [true, "First name is required"] },
+    middle_name: { type: String, default: "" },
+    last_name: { type: String, required: [true, "Last name is required"] },
     suffix: {
       type: String,
       enum: ["Jr.", "Sr.", "II", "III", "IV", "V", ""],
       default: "",
     },
-
-    sex: {
-      type: String,
-      enum: ["Male", "Female", "Other"],
-      default: "Other",
-    },
-
-    age: {
-      type: Number,
-      default: 0,
-    },
-
+    sex: { type: String, enum: ["Male", "Female", "Other"], default: "Other" },
+    age: { type: Number, default: 0 },
     date_of_birth: {
       type: Date,
       required: [true, "Date of birth is required"],
     },
-
     address: {
       street: { type: String, required: [true, "Street is required"] },
       barangay: { type: String, required: [true, "Barangay is required"] },
@@ -321,24 +105,16 @@ const UserMongooseSchema = new Schema<IUserDocument>(
         lng: { type: Number },
       },
     },
-
     contact_number: {
       type: String,
       required: [true, "Contact number is required"],
       unique: true,
       validate: {
-        validator: function (v: string) {
-          return /^09\d{9}$/.test(v) && v.length === 11;
-        },
+        validator: (v: string) => /^09\d{9}$/.test(v) && v.length === 11,
         message: "Phone number must start with 09 and have 11 digits total",
       },
     },
-
-    avatar_url: {
-      type: String,
-      default: null,
-    },
-
+    avatar_url: { type: String, default: null },
     email: {
       type: String,
       required: [true, "Email is required"],
@@ -346,124 +122,69 @@ const UserMongooseSchema = new Schema<IUserDocument>(
       lowercase: true,
       trim: true,
     },
-
-    password: {
-      type: String,
-      required: [true, "Password is required"],
-    },
-
+    password: { type: String, required: [true, "Password is required"] },
     role: {
       type: String,
       enum: ["User", "Admin", "Supervisor", "Staff"],
       default: "User",
     },
-
     status: {
       type: String,
       enum: ["Active", "Inactive", "Suspended", "Pending"],
       default: "Pending",
     },
-
-    is_verified: {
-      type: Boolean,
-      default: false,
-    },
-
-    is_email_verified: {
-      type: Boolean,
-      default: false,
-    },
-
-    created_by: {
-      type: String,
-      default: null,
-    },
-
-    updated_by: {
-      type: String,
-      default: null,
-    },
+    is_verified: { type: Boolean, default: false },
+    is_email_verified: { type: Boolean, default: false },
+    created_by: { type: String, default: null },
+    updated_by: { type: String, default: null },
   },
   {
-    timestamps: {
-      createdAt: "created_at",
-      updatedAt: "updated_at",
-    },
+    timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
   },
 );
 
-// Indexes for better query performance - REMOVED DUPLICATES
-// pwd_issued_id and card_id are already indexed via unique: true
+// ============ INDEXES ============
 UserMongooseSchema.index({ "address.barangay": 1 });
 UserMongooseSchema.index({ last_name: 1, first_name: 1 });
 UserMongooseSchema.index({ status: 1 });
 UserMongooseSchema.index({ is_verified: 1 });
-UserMongooseSchema.index({ created_at: -1 }); // For sorting by creation date
-UserMongooseSchema.index({ email: 1 }); // Already unique but adding for compound queries
-UserMongooseSchema.index({ contact_number: 1 }); // Already unique but adding for compound queries
+UserMongooseSchema.index({ created_at: -1 });
+UserMongooseSchema.index({ email: 1 });
+UserMongooseSchema.index({ contact_number: 1 });
 
-// Hash password before saving
+// ============ HOOKS ============
 UserMongooseSchema.pre<IUserDocument>("save", async function () {
-  const user = this as IUserDocument & {
-    isModified: (field: string) => boolean;
-  };
-
-  if (!user.isModified("password")) {
-    return;
-  }
-
-  try {
-    const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(user.password, salt);
-  } catch (error: any) {
-    throw error;
-  }
+  const user = this as IUserDocument & { isModified: (f: string) => boolean };
+  if (!user.isModified("password")) return;
+  const salt = await bcrypt.genSalt(10);
+  user.password = await bcrypt.hash(user.password, salt);
 });
 
-// Transform data before saving
 UserMongooseSchema.pre<IUserDocument>("save", function () {
   const user = this as IUserDocument;
-
-  // Calculate age from date_of_birth
   if (user.date_of_birth) {
     const today = new Date();
-    const birthDate = new Date(user.date_of_birth);
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const monthDiff = today.getMonth() - birthDate.getMonth();
-
-    if (
-      monthDiff < 0 ||
-      (monthDiff === 0 && today.getDate() < birthDate.getDate())
-    ) {
-      age--;
-    }
+    const birth = new Date(user.date_of_birth);
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
     user.age = age;
   }
-
-  // Ensure contact_number is exactly 11 characters and starts with 09
   if (user.contact_number) {
-    let cleaned = user.contact_number.replace(/\D/g, "");
-    if (!cleaned.startsWith("0") && !cleaned.startsWith("63")) {
-      cleaned = "0" + cleaned;
-    }
-    if (cleaned.startsWith("63") && cleaned.length >= 12) {
-      cleaned = "0" + cleaned.substring(2);
-    }
-    if (cleaned.length > 11) {
-      cleaned = cleaned.substring(0, 11);
-    }
-    user.contact_number = cleaned;
+    let n = user.contact_number.replace(/\D/g, "");
+    if (!n.startsWith("0") && !n.startsWith("63")) n = "0" + n;
+    if (n.startsWith("63") && n.length >= 12) n = "0" + n.substring(2);
+    user.contact_number = n.substring(0, 11);
   }
 });
 
-// Compare password method
+// ============ METHODS ============
 UserMongooseSchema.methods.comparePassword = async function (
-  candidatePassword: string,
+  candidate: string,
 ): Promise<boolean> {
-  return await bcrypt.compare(candidatePassword, this.password);
+  return bcrypt.compare(candidate, this.password);
 };
 
-// Remove sensitive data when converting to JSON
 UserMongooseSchema.methods.toJSON = function () {
   const user = this.toObject();
   delete user.password;
@@ -471,53 +192,47 @@ UserMongooseSchema.methods.toJSON = function () {
   return user;
 };
 
-// Create and export Mongoose model
+// ============ MODEL ============
 export const UserModel =
   mongoose.models.User ||
   mongoose.model<IUserDocument>("User", UserMongooseSchema);
 
-// ============ HELPER FUNCTIONS ============
-export const validateUser = (data: unknown): User => {
-  return UserSchema.parse(data);
+// ============ VALIDATION HELPERS ============
+export const validateUser = (data: unknown): User => UserSchema.parse(data);
+export const validateUserRegister = (data: unknown): UserRegister =>
+  UserRegisterSchema.parse(data);
+export const validateUserUpdate = (data: unknown): UserUpdate =>
+  UserUpdateSchema.parse(data);
+export const validateUserLogin = (data: unknown): UserLogin =>
+  UserLoginSchema.parse(data);
+
+// ============ HELPERS ============
+const calcAge = (dob: any): number => {
+  if (!dob) return 0;
+  const today = new Date();
+  const birth = new Date(dob);
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
 };
 
-export const validateUserRegister = (data: unknown): UserRegister => {
-  return UserRegisterSchema.parse(data);
+const formatDob = (dob: any): string => {
+  if (!dob) return "";
+  const d = new Date(dob);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
-
-export const validateUserUpdate = (data: unknown): UserUpdate => {
-  return UserUpdateSchema.parse(data);
-};
-
-export const validateUserLogin = (data: unknown): UserLogin => {
-  return UserLoginSchema.parse(data);
-};
-
-/**
- * Sanitizes a user object for public consumption
- */
 
 export const sanitizeUserForPublic = (user: any): UserPublic => {
-  // Create a deep copy to avoid mutating the original
   const userForZod = JSON.parse(JSON.stringify(user));
 
-  // Handle date_of_birth - convert Date to YYYY-MM-DD string
   if (userForZod.date_of_birth) {
-    // If it's a Date object or ISO string, convert to YYYY-MM-DD
-    if (
-      userForZod.date_of_birth instanceof Date ||
-      (typeof userForZod.date_of_birth === "string" &&
-        userForZod.date_of_birth.includes("T"))
-    ) {
-      const date = new Date(userForZod.date_of_birth);
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      userForZod.date_of_birth = `${year}-${month}-${day}`;
+    const raw = userForZod.date_of_birth;
+    if (raw instanceof Date || (typeof raw === "string" && raw.includes("T"))) {
+      userForZod.date_of_birth = formatDob(raw);
     }
   }
 
-  // Ensure address object has all required fields
   if (userForZod.address) {
     userForZod.address = {
       street: userForZod.address.street || "",
@@ -532,7 +247,6 @@ export const sanitizeUserForPublic = (user: any): UserPublic => {
     };
   }
 
-  // Ensure contact_number is a string
   if (
     userForZod.contact_number &&
     typeof userForZod.contact_number !== "string"
@@ -540,71 +254,28 @@ export const sanitizeUserForPublic = (user: any): UserPublic => {
     userForZod.contact_number = String(userForZod.contact_number);
   }
 
+  const fullName = [
+    user.first_name,
+    user.middle_name,
+    user.last_name,
+    user.suffix,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  const age = calcAge(user.date_of_birth);
+
   try {
     const publicUser = UserPublicSchema.parse(userForZod);
-
-    // Calculate age for display
-    let age = 0;
-    if (user.date_of_birth) {
-      const today = new Date();
-      const birthDate = new Date(user.date_of_birth);
-      age = today.getFullYear() - birthDate.getFullYear();
-      const monthDiff = today.getMonth() - birthDate.getMonth();
-
-      if (
-        monthDiff < 0 ||
-        (monthDiff === 0 && today.getDate() < birthDate.getDate())
-      ) {
-        age--;
-      }
-    }
-
-    // Generate full name
-    const fullName = `${user.first_name || ""} ${
-      user.middle_name ? user.middle_name + " " : ""
-    }${user.last_name || ""}${user.suffix ? " " + user.suffix : ""}`;
-
     return {
       ...publicUser,
       age_display: `${age} years`,
-      full_name: fullName.trim(),
+      full_name: fullName,
       is_pwd_verified: user.is_verified,
     };
   } catch (error) {
     console.error("Error sanitizing user:", error);
-
-    // Calculate age for display
-    let age = 0;
-    if (user.date_of_birth) {
-      const today = new Date();
-      const birthDate = new Date(user.date_of_birth);
-      age = today.getFullYear() - birthDate.getFullYear();
-      const monthDiff = today.getMonth() - birthDate.getMonth();
-
-      if (
-        monthDiff < 0 ||
-        (monthDiff === 0 && today.getDate() < birthDate.getDate())
-      ) {
-        age--;
-      }
-    }
-
-    // Generate full name
-    const fullName = `${user.first_name || ""} ${
-      user.middle_name ? user.middle_name + " " : ""
-    }${user.last_name || ""}${user.suffix ? " " + user.suffix : ""}`.trim();
-
-    // Format date_of_birth to YYYY-MM-DD string
-    let formattedDateOfBirth = "";
-    if (user.date_of_birth) {
-      const date = new Date(user.date_of_birth);
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      formattedDateOfBirth = `${year}-${month}-${day}`;
-    }
-
-    // Return properly typed object with only UserPublic fields (no created_at/updated_at)
     return {
       _id: user._id,
       user_id: user.user_id,
@@ -613,7 +284,7 @@ export const sanitizeUserForPublic = (user: any): UserPublic => {
       last_name: user.last_name || "",
       suffix: user.suffix || "",
       sex: user.sex || "Other",
-      date_of_birth: formattedDateOfBirth,
+      date_of_birth: formatDob(user.date_of_birth),
       age: user.age || age,
       address: user.address || {
         street: "",
@@ -641,65 +312,30 @@ export const sanitizeUserForPublic = (user: any): UserPublic => {
     };
   }
 };
-/**
- * Transforms Zod-validated data to Mongoose-compatible format
- */
+
 export const transformForMongoose = (data: any): any => {
-  const transformed = { ...data };
-
-  if (transformed.form_id) {
-    delete transformed.form_id;
-  }
-
-  transformed.form_id = null;
-
-  if (
-    transformed.date_of_birth &&
-    typeof transformed.date_of_birth === "string"
-  ) {
+  const transformed = { ...data, form_id: null };
+  if (typeof transformed.date_of_birth === "string") {
     transformed.date_of_birth = new Date(transformed.date_of_birth);
   }
-
   if (transformed.contact_number) {
-    let phone = transformed.contact_number.replace(/\D/g, "");
-    if (phone.startsWith("63") && phone.length >= 12) {
-      phone = "0" + phone.substring(2);
-    }
-    if (!phone.startsWith("0") && phone.length === 10) {
-      phone = "0" + phone;
-    }
-    transformed.contact_number = phone.substring(0, 11);
+    let n = transformed.contact_number.replace(/\D/g, "");
+    if (n.startsWith("63") && n.length >= 12) n = "0" + n.substring(2);
+    if (!n.startsWith("0") && n.length === 10) n = "0" + n;
+    transformed.contact_number = n.substring(0, 11);
   }
-
   return transformed;
 };
 
-/**
- * Gets the full name from a user object
- */
-export const getFullName = (user: any): string => {
-  const parts = [
-    user.first_name,
-    user.middle_name,
-    user.last_name,
-    user.suffix,
-  ].filter(Boolean);
-  return parts.join(" ") || "User";
-};
+export const getFullName = (user: any): string =>
+  [user.first_name, user.middle_name, user.last_name, user.suffix]
+    .filter(Boolean)
+    .join(" ") || "User";
 
-/**
- * Gets the display name from a user object
- */
-export const getDisplayName = (user: any): string => {
-  if (user.first_name && user.last_name) {
-    return `${user.first_name} ${user.last_name}`;
-  }
-  return user.first_name || user.email?.split("@")[0] || "User";
-};
+export const getDisplayName = (user: any): string =>
+  user.first_name && user.last_name
+    ? `${user.first_name} ${user.last_name}`
+    : user.first_name || user.email?.split("@")[0] || "User";
 
-/**
- * Gets the user's initial for avatar
- */
-export const getUserInitial = (user: any): string => {
-  return user.first_name ? user.first_name.charAt(0).toUpperCase() : "U";
-};
+export const getUserInitial = (user: any): string =>
+  user.first_name ? user.first_name.charAt(0).toUpperCase() : "U";

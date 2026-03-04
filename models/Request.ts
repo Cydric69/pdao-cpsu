@@ -1,5 +1,7 @@
+// models/Request.ts
 import mongoose, { Document, Schema } from "mongoose";
 import { IRequest } from "@/types/request";
+import { ItemModel } from "./Item";
 
 // ============ MONGOOSE DOCUMENT INTERFACE ============
 export interface IRequestDocument extends IRequest, Document {
@@ -11,6 +13,23 @@ export interface IRequestDocument extends IRequest, Document {
   ): Promise<void>;
   reject(reason: string, rejectedBy: string): Promise<void>;
   distribute(distributedBy: string): Promise<void>;
+  validateItemAvailability(): Promise<{
+    available: boolean;
+    unavailableItems: Array<{
+      item_id: string;
+      item_name: string;
+      requested: number;
+      available: number;
+    }>;
+  }>;
+  validateCertificateRequirements(): Promise<{
+    valid: boolean;
+    missingCertificates: Array<{
+      item_id: string;
+      item_name: string;
+      requiredCerts: string[];
+    }>;
+  }>;
 }
 
 // ============ MONGOOSE SCHEMA ============
@@ -49,9 +68,24 @@ const RequestMongooseSchema = new Schema<IRequestDocument>(
           type: String,
           required: true,
           ref: "Item",
+          validate: {
+            validator: async function (itemId: string) {
+              const item = await ItemModel.findOne({ item_id: itemId });
+              return !!item;
+            },
+            message: "Item not found",
+          },
         },
         item_name: { type: String, required: true },
-        quantity: { type: Number, required: true, min: 1 },
+        quantity: {
+          type: Number,
+          required: true,
+          min: [1, "Quantity must be at least 1"],
+          validate: {
+            validator: Number.isInteger,
+            message: "Quantity must be an integer",
+          },
+        },
         unit: { type: String, required: true },
         requires_prescription: { type: Boolean, default: false },
         prescription_image_url: { type: String, default: null },
@@ -62,7 +96,10 @@ const RequestMongooseSchema = new Schema<IRequestDocument>(
       },
     ],
 
-    purpose: String,
+    purpose: {
+      type: String,
+      maxlength: [500, "Purpose cannot exceed 500 characters"],
+    },
 
     queue_number: {
       type: Number,
@@ -202,6 +239,41 @@ RequestMongooseSchema.pre("save", async function (next) {
   }
 });
 
+// Validate items against Item model before saving
+RequestMongooseSchema.pre("save", async function (next) {
+  const doc = this as IRequestDocument;
+
+  // Skip validation if not modifying items or status is already processed
+  if (!doc.isModified("items") && !doc.isNew) {
+    return;
+  }
+
+  try {
+    // Validate each item exists and has correct unit
+    for (const item of doc.items) {
+      const dbItem = await ItemModel.findOne({ item_id: item.item_id });
+
+      if (!dbItem) {
+        throw new Error(`Item ${item.item_id} not found`);
+      }
+
+      // Update item_name from database to ensure consistency
+      item.item_name = dbItem.item_name;
+
+      // Set requires_prescription based on item configuration
+      item.requires_prescription = dbItem.requires_prescription;
+
+      // Validate unit matches item's unit (optional - depends on business logic)
+      // You might want to allow different units or convert them
+    }
+
+    // Update has_prescription flag
+    doc.has_prescription = doc.items.some((item) => item.requires_prescription);
+  } catch (error) {
+    console.error("Error validating items:", error);
+  }
+});
+
 // Set queue position when status changes to "In Queue"
 RequestMongooseSchema.pre("save", async function (next) {
   const doc = this as IRequestDocument;
@@ -245,6 +317,97 @@ RequestMongooseSchema.pre("save", async function (next) {
 // ============ METHODS ============
 
 /**
+ * Validate if all requested items are available in stock
+ */
+RequestMongooseSchema.methods.validateItemAvailability =
+  async function (): Promise<{
+    available: boolean;
+    unavailableItems: Array<{
+      item_id: string;
+      item_name: string;
+      requested: number;
+      available: number;
+    }>;
+  }> {
+    const doc = this as IRequestDocument;
+    const unavailableItems = [];
+
+    for (const item of doc.items) {
+      const dbItem = await ItemModel.findOne({ item_id: item.item_id });
+
+      if (!dbItem) {
+        unavailableItems.push({
+          item_id: item.item_id,
+          item_name: item.item_name,
+          requested: item.quantity,
+          available: 0,
+        });
+        continue;
+      }
+
+      const availableStock = dbItem.getAvailableStock();
+
+      if (availableStock < item.quantity) {
+        unavailableItems.push({
+          item_id: item.item_id,
+          item_name: item.item_name,
+          requested: item.quantity,
+          available: availableStock,
+        });
+      }
+    }
+
+    return {
+      available: unavailableItems.length === 0,
+      unavailableItems,
+    };
+  };
+
+/**
+ * Validate certificate requirements for items
+ */
+RequestMongooseSchema.methods.validateCertificateRequirements =
+  async function (): Promise<{
+    valid: boolean;
+    missingCertificates: Array<{
+      item_id: string;
+      item_name: string;
+      requiredCerts: string[];
+    }>;
+  }> {
+    const doc = this as IRequestDocument;
+    const missingCertificates = [];
+
+    for (const item of doc.items) {
+      const dbItem = await ItemModel.findOne({ item_id: item.item_id });
+
+      if (!dbItem) continue;
+
+      const requiredCerts: string[] = [];
+      if (dbItem.requires_med_cert) requiredCerts.push("Medical Certificate");
+      if (dbItem.requires_brgy_cert) requiredCerts.push("Barangay Certificate");
+
+      // For prescription-required items, check if prescription is provided
+      if (dbItem.requires_prescription && !item.prescription_image_url) {
+        requiredCerts.push("Prescription");
+      }
+
+      if (requiredCerts.length > 0) {
+        missingCertificates.push({
+          item_id: item.item_id,
+          item_name: item.item_name,
+          requiredCerts,
+        });
+      }
+    }
+
+    return {
+      valid: missingCertificates.length === 0,
+      missingCertificates,
+    };
+  };
+
+/**
  * Calculate estimated wait time
  */
 RequestMongooseSchema.methods.calculateWaitTime = function (): number {
@@ -282,50 +445,93 @@ RequestMongooseSchema.methods.updateQueuePosition = async function (
 };
 
 /**
- * Approve request
+ * Approve request - reserves stock from items
  */
 RequestMongooseSchema.methods.approve = async function (
   approvedBy: string,
   approvedItems?: Array<{ item_id: string; quantity: number }>,
 ): Promise<void> {
   const doc = this as IRequestDocument;
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  if (approvedItems && approvedItems.length > 0) {
-    // Partial approval
-    doc.approved_items = approvedItems.map((item) => ({
-      item_id: item.item_id,
-      quantity_approved: item.quantity,
-    }));
-    doc.status = "Partially Approved";
+  try {
+    if (approvedItems && approvedItems.length > 0) {
+      // Partial approval - reserve only approved items
+      doc.approved_items = approvedItems.map((item) => ({
+        item_id: item.item_id,
+        quantity_approved: item.quantity,
+      }));
+      doc.status = "Partially Approved";
 
-    // Check for rejected items
-    const requestedItemIds = doc.items.map((item) => item.item_id);
-    const approvedItemIds = approvedItems.map((item) => item.item_id);
-    const rejectedItemIds = requestedItemIds.filter(
-      (id) => !approvedItemIds.includes(id),
-    );
+      // Reserve stock for approved items
+      for (const item of approvedItems) {
+        const dbItem = await ItemModel.findOne({
+          item_id: item.item_id,
+        }).session(session);
+        if (!dbItem) {
+          throw new Error(`Item ${item.item_id} not found`);
+        }
 
-    doc.rejected_items = rejectedItemIds.map((id) => ({
-      item_id: id,
-      reason: "Item not available at this time",
-    }));
-  } else {
-    // Full approval
-    doc.approved_items = doc.items.map((item) => ({
-      item_id: item.item_id,
-      quantity_approved: item.quantity,
-    }));
-    doc.status = "Approved";
+        const reserved = await dbItem.reserveStock(item.quantity);
+        if (!reserved) {
+          throw new Error(`Insufficient stock for item ${dbItem.item_name}`);
+        }
+      }
+
+      // Mark items without approval as rejected
+      const requestedItemIds = doc.items.map((item) => item.item_id);
+      const approvedItemIds = approvedItems.map((item) => item.item_id);
+      const rejectedItemIds = requestedItemIds.filter(
+        (id) => !approvedItemIds.includes(id),
+      );
+
+      doc.rejected_items = rejectedItemIds.map((id) => {
+        const item = doc.items.find((i) => i.item_id === id);
+        return {
+          item_id: id,
+          reason: item?.notes || "Item not available at this time",
+        };
+      });
+    } else {
+      // Full approval - reserve all items
+      doc.approved_items = doc.items.map((item) => ({
+        item_id: item.item_id,
+        quantity_approved: item.quantity,
+      }));
+      doc.status = "Approved";
+
+      // Reserve stock for all items
+      for (const item of doc.items) {
+        const dbItem = await ItemModel.findOne({
+          item_id: item.item_id,
+        }).session(session);
+        if (!dbItem) {
+          throw new Error(`Item ${item.item_id} not found`);
+        }
+
+        const reserved = await dbItem.reserveStock(item.quantity);
+        if (!reserved) {
+          throw new Error(`Insufficient stock for item ${dbItem.item_name}`);
+        }
+      }
+    }
+
+    doc.approved_by = approvedBy;
+    doc.approved_at = new Date().toISOString().split("T")[0];
+
+    await doc.save({ session });
+    await session.commitTransaction();
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    session.endSession();
   }
-
-  doc.approved_by = approvedBy;
-  doc.approved_at = new Date().toISOString().split("T")[0];
-
-  await doc.save();
 };
 
 /**
- * Reject request
+ * Reject request - no stock reservation
  */
 RequestMongooseSchema.methods.reject = async function (
   reason: string,
@@ -342,18 +548,85 @@ RequestMongooseSchema.methods.reject = async function (
 };
 
 /**
- * Mark as distributed
+ * Mark as distributed - fulfills reserved stock from items
  */
 RequestMongooseSchema.methods.distribute = async function (
   distributedBy: string,
 ): Promise<void> {
   const doc = this as IRequestDocument;
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  doc.status = "Completed";
-  doc.distributed_by = distributedBy;
-  doc.distributed_at = new Date().toISOString().split("T")[0];
+  try {
+    // Check if request has approved items
+    if (!doc.approved_items || doc.approved_items.length === 0) {
+      throw new Error("No approved items to distribute");
+    }
 
-  await doc.save();
+    // Fulfill reserved stock for approved items
+    for (const approvedItem of doc.approved_items) {
+      const dbItem = await ItemModel.findOne({
+        item_id: approvedItem.item_id,
+      }).session(session);
+      if (!dbItem) {
+        throw new Error(`Item ${approvedItem.item_id} not found`);
+      }
+
+      await dbItem.fulfillReservedStock(approvedItem.quantity_approved);
+    }
+
+    doc.status = "Completed";
+    doc.distributed_by = distributedBy;
+    doc.distributed_at = new Date().toISOString().split("T")[0];
+
+    await doc.save({ session });
+    await session.commitTransaction();
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    session.endSession();
+  }
+};
+
+/**
+ * Cancel request - releases reserved stock if any
+ */
+RequestMongooseSchema.methods.cancel = async function (
+  cancelledBy: string,
+  reason?: string,
+): Promise<void> {
+  const doc = this as IRequestDocument;
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    // If request was approved, release reserved stock
+    if (doc.status === "Approved" || doc.status === "Partially Approved") {
+      if (doc.approved_items && doc.approved_items.length > 0) {
+        for (const approvedItem of doc.approved_items) {
+          const dbItem = await ItemModel.findOne({
+            item_id: approvedItem.item_id,
+          }).session(session);
+          if (dbItem) {
+            await dbItem.releaseReservedStock(approvedItem.quantity_approved);
+          }
+        }
+      }
+    }
+
+    doc.status = "Cancelled";
+    doc.notes = reason || "Request cancelled";
+    doc.updated_by = cancelledBy;
+
+    await doc.save({ session });
+    await session.commitTransaction();
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    session.endSession();
+  }
 };
 
 // ============ VIRTUAL PROPERTIES ============
@@ -368,6 +641,10 @@ RequestMongooseSchema.virtual("total_items").get(function () {
 
 RequestMongooseSchema.virtual("can_be_processed").get(function () {
   return ["Pending", "In Queue"].includes(this.status);
+});
+
+RequestMongooseSchema.virtual("needs_certificates").get(function () {
+  return this.items.some((item) => item.requires_prescription);
 });
 
 RequestMongooseSchema.virtual("wait_time_display").get(function () {
@@ -401,7 +678,77 @@ RequestMongooseSchema.set("toObject", {
   },
 });
 
+// ============ STATIC METHODS ============
+
+/**
+ * Get queue statistics
+ */
+RequestMongooseSchema.statics.getQueueStatistics = async function () {
+  const stats = await this.aggregate([
+    {
+      $match: {
+        status: { $in: ["In Queue", "Processing"] },
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        totalInQueue: { $sum: 1 },
+        emergencyCount: {
+          $sum: { $cond: [{ $eq: ["$is_emergency", true] }, 1, 0] },
+        },
+        highPriorityCount: {
+          $sum: { $cond: [{ $eq: ["$priority", "High"] }, 1, 0] },
+        },
+        averageWaitTime: { $avg: "$estimated_wait_time" },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        totalInQueue: 1,
+        emergencyCount: 1,
+        highPriorityCount: 1,
+        averageWaitTime: { $round: ["$averageWaitTime", 0] },
+      },
+    },
+  ]);
+
+  // Get barangay distribution
+  const byBarangay = await this.aggregate([
+    {
+      $match: {
+        status: { $in: ["In Queue", "Processing"] },
+      },
+    },
+    {
+      $group: {
+        _id: "$requester_barangay",
+        count: { $sum: 1 },
+      },
+    },
+    {
+      $sort: { count: -1 },
+    },
+  ]);
+
+  return {
+    ...(stats[0] || {
+      totalInQueue: 0,
+      emergencyCount: 0,
+      highPriorityCount: 0,
+      averageWaitTime: 0,
+    }),
+    byBarangay,
+  };
+};
+
 // ============ MODEL ============
+// Delete the model if it exists to ensure schema updates are applied (for development)
+if (mongoose.models.Request) {
+  delete mongoose.models.Request;
+}
+
 export const RequestModel =
   mongoose.models.Request ||
   mongoose.model<IRequestDocument>("Request", RequestMongooseSchema);

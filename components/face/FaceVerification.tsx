@@ -28,6 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import * as faceapi from "face-api.js";
 import { createWorker } from "tesseract.js";
+import DigitalPWDCard from "@/components/face/DigitalPWDCard";
 
 interface FaceVerificationProps {
   onVerificationComplete?: (result: any) => void;
@@ -38,7 +39,7 @@ interface ExtractedData {
   name: string;
   barangay: string;
   type_of_disability: string;
-  address: string;
+  address: string;  
   date_of_birth: string;
   sex: string;
   blood_type: string;
@@ -1184,6 +1185,81 @@ export default function FaceVerification({
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* ── Digital PWD Card ── */}
+      {(idFrontData || idBackData) && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+              Digital PWD ID Preview
+            </h3>
+            {verificationResult && (
+              <span
+                className={`text-xs font-bold px-2 py-1 rounded-full ${
+                  verificationResult.success
+                    ? "bg-green-100 text-green-700"
+                    : "bg-red-100 text-red-700"
+                }`}
+              >
+                {verificationResult.success ? "✓ Verified" : "✗ Unverified"}
+              </span>
+            )}
+          </div>
+
+          {/* Front */}
+          <div>
+            <p className="mb-1 text-xs text-gray-400 uppercase tracking-wider">
+              Front
+            </p>
+            <DigitalPWDCard
+              data={{
+                card_id: idFrontData?.card_id || "",
+                name: idFrontData?.name || "",
+                barangay: idFrontData?.barangay || "",
+                type_of_disability: idFrontData?.type_of_disability || "",
+                address: idBackData?.address || "",
+                date_of_birth: idBackData?.date_of_birth || "",
+                sex: idBackData?.sex || "",
+                blood_type: idBackData?.blood_type || "",
+                date_issued: idBackData?.date_issued || "",
+                emergency_contact_name:
+                  idBackData?.emergency_contact_name || "",
+                emergency_contact_number:
+                  idBackData?.emergency_contact_number || "",
+                face_image_url: extractedFaceFromId,
+              }}
+            />
+          </div>
+
+          {/* Back */}
+          {idBackData && (
+            <div>
+              <p className="mb-1 text-xs text-gray-400 uppercase tracking-wider">
+                Back
+              </p>
+              <DigitalPWDCard
+                showBack
+                data={{
+                  card_id: idFrontData?.card_id || "",
+                  name: idFrontData?.name || "",
+                  barangay: idFrontData?.barangay || "",
+                  type_of_disability: idFrontData?.type_of_disability || "",
+                  address: idBackData?.address || "",
+                  date_of_birth: idBackData?.date_of_birth || "",
+                  sex: idBackData?.sex || "",
+                  blood_type: idBackData?.blood_type || "",
+                  date_issued: idBackData?.date_issued || "",
+                  emergency_contact_name:
+                    idBackData?.emergency_contact_name || "",
+                  emergency_contact_number:
+                    idBackData?.emergency_contact_number || "",
+                  face_image_url: extractedFaceFromId,
+                }}
+              />
+            </div>
+          )}
+        </div>
       )}
 
       {/* ── Action Buttons ── */}

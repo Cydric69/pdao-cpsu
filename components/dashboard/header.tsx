@@ -110,6 +110,17 @@ export default function DashboardHeader({ user }: DashboardHeaderProps) {
     },
   ];
 
+  // Function to determine if a nav item is active
+  const isActive = (href: string) => {
+    if (href === "/dashboard") {
+      // For dashboard, only match exactly "/dashboard"
+      return pathname === href;
+    } else {
+      // For other routes, check if pathname starts with the href
+      return pathname.startsWith(href);
+    }
+  };
+
   return (
     <>
       {/* Main Header */}
@@ -218,8 +229,7 @@ export default function DashboardHeader({ user }: DashboardHeaderProps) {
         <div className="mx-auto max-w-7xl px-4">
           <nav className="flex items-center justify-center space-x-1 py-2">
             {navItems.map((item) => {
-              const isActive =
-                pathname === item.href || pathname.startsWith(`${item.href}/`);
+              const active = isActive(item.href);
               const Icon = item.icon;
 
               return (
@@ -227,7 +237,7 @@ export default function DashboardHeader({ user }: DashboardHeaderProps) {
                   key={item.name}
                   href={item.href}
                   className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                    isActive
+                    active
                       ? "bg-green-50 text-green-700"
                       : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"
                   }`}

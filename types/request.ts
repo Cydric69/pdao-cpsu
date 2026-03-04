@@ -1,10 +1,13 @@
+// types/request.ts
 import { z } from "zod";
 
 // ============ ZOD SCHEMAS ============
 
 // Request Item Schema (items within a request)
 export const RequestItemSchema = z.object({
-  item_id: z.string().regex(/^ITEM-\d{5}$/, "Invalid item ID format"),
+  item_id: z
+    .string()
+    .regex(/^ITEM-\d{5}$/, "Invalid item ID format (ITEM-#####)"),
   item_name: z.string(),
   quantity: z.number().int().positive("Quantity must be positive"),
   unit: z.string(),
@@ -174,6 +177,7 @@ export const RequestPublicSchema = RequestSchema.omit({
 }).extend({
   can_be_processed: z.boolean().optional(),
   wait_time_display: z.string().optional(),
+  needs_certificates: z.boolean().optional(),
 });
 
 // Queue Statistics Schema
@@ -190,6 +194,68 @@ export const QueueStatisticsSchema = z.object({
   ),
 });
 
+// Item Availability Validation Schema
+export const ItemAvailabilitySchema = z.object({
+  available: z.boolean(),
+  unavailableItems: z.array(
+    z.object({
+      item_id: z.string(),
+      item_name: z.string(),
+      requested: z.number(),
+      available: z.number(),
+    }),
+  ),
+});
+
+// Certificate Validation Schema
+export const CertificateValidationSchema = z.object({
+  valid: z.boolean(),
+  missingCertificates: z.array(
+    z.object({
+      item_id: z.string(),
+      item_name: z.string(),
+      requiredCerts: z.array(z.string()),
+    }),
+  ),
+});
+
+// Request Approval Input Schema
+export const RequestApprovalSchema = z.object({
+  request_id: z.string(),
+  approved_by: z.string(),
+  approved_items: z
+    .array(
+      z.object({
+        item_id: z.string(),
+        quantity: z.number().int().positive(),
+      }),
+    )
+    .optional(),
+  notes: z.string().optional(),
+});
+
+// Request Rejection Input Schema
+export const RequestRejectionSchema = z.object({
+  request_id: z.string(),
+  rejected_by: z.string(),
+  reason: z.string().min(1, "Rejection reason is required"),
+  notes: z.string().optional(),
+});
+
+// Request Distribution Schema
+export const RequestDistributionSchema = z.object({
+  request_id: z.string(),
+  distributed_by: z.string(),
+  notes: z.string().optional(),
+});
+
+// Request Cancellation Schema
+export const RequestCancellationSchema = z.object({
+  request_id: z.string(),
+  cancelled_by: z.string(),
+  reason: z.string().optional(),
+});
+
 // ============ TYPES ============
 export type Request = z.infer<typeof RequestSchema>;
 export type RequestCreate = z.infer<typeof RequestCreateSchema>;
@@ -200,6 +266,12 @@ export type RequestItem = z.infer<typeof RequestItemSchema>;
 export type ApprovedItem = z.infer<typeof ApprovedItemSchema>;
 export type RejectedItem = z.infer<typeof RejectedItemSchema>;
 export type QueueStatistics = z.infer<typeof QueueStatisticsSchema>;
+export type ItemAvailability = z.infer<typeof ItemAvailabilitySchema>;
+export type CertificateValidation = z.infer<typeof CertificateValidationSchema>;
+export type RequestApproval = z.infer<typeof RequestApprovalSchema>;
+export type RequestRejection = z.infer<typeof RequestRejectionSchema>;
+export type RequestDistribution = z.infer<typeof RequestDistributionSchema>;
+export type RequestCancellation = z.infer<typeof RequestCancellationSchema>;
 
 // ============ INTERFACES ============
 export interface IRequest {
@@ -253,4 +325,226 @@ export interface IRequest {
   updated_by?: string | null;
   created_at?: Date;
   updated_at?: Date;
+}
+
+// ============ CONSTANTS ============
+export const REQUEST_STATUSES = [
+  "Pending",
+  "In Queue",
+  "Processing",
+  "Approved",
+  "Partially Approved",
+  "Rejected",
+  "Ready for Pickup",
+  "Completed",
+  "Cancelled",
+] as const;
+
+export const REQUEST_PRIORITIES = [
+  "Emergency",
+  "High",
+  "Normal",
+  "Low",
+] as const;
+
+// ============ HELPER FUNCTIONS ============
+
+/**
+ * Calculate estimated wait time in minutes
+ */
+export function calculateWaitTime(
+  itemCount: number,
+  priority: "Emergency" | "High" | "Normal" | "Low",
+): number {
+  // Base wait time: 5 minutes per item
+  let waitTime = itemCount * 5;
+
+  // Adjust based on priority
+  switch (priority) {
+    case "Emergency":
+      waitTime = Math.ceil(waitTime * 0.5); // 50% of normal time
+      break;
+    case "High":
+      waitTime = Math.ceil(waitTime * 0.75); // 75% of normal time
+      break;
+    case "Low":
+      waitTime = Math.ceil(waitTime * 1.5); // 150% of normal time
+      break;
+  }
+
+  return waitTime;
+}
+
+/**
+ * Format wait time for display
+ */
+export function formatWaitTime(minutes: number | null | undefined): string {
+  if (!minutes) return "Unknown";
+
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+
+  if (hours > 0) {
+    return `${hours} hour${hours > 1 ? "s" : ""} ${mins} min`;
+  }
+  return `${mins} minutes`;
+}
+
+/**
+ * Check if request can be processed
+ */
+export function canBeProcessed(status: string): boolean {
+  return ["Pending", "In Queue"].includes(status);
+}
+
+/**
+ * Check if request needs certificates
+ */
+export function needsCertificates(
+  items: Array<{ requires_prescription: boolean }>,
+): boolean {
+  return items.some((item) => item.requires_prescription);
+}
+
+/**
+ * Get request status color for UI
+ */
+export function getRequestStatusColor(status: string): string {
+  const colors: Record<string, string> = {
+    Pending: "yellow",
+    "In Queue": "blue",
+    Processing: "purple",
+    Approved: "green",
+    "Partially Approved": "emerald",
+    Rejected: "red",
+    "Ready for Pickup": "indigo",
+    Completed: "green",
+    Cancelled: "gray",
+  };
+  return colors[status] || "gray";
+}
+
+/**
+ * Get request priority color for UI
+ */
+export function getRequestPriorityColor(priority: string): string {
+  const colors: Record<string, string> = {
+    Emergency: "red",
+    High: "orange",
+    Normal: "blue",
+    Low: "green",
+  };
+  return colors[priority] || "gray";
+}
+
+/**
+ * Get priority badge label
+ */
+export function getPriorityBadge(
+  priority: string,
+  isEmergency: boolean,
+): string {
+  if (isEmergency) return "EMERGENCY";
+  return priority.toUpperCase();
+}
+
+/**
+ * Validate if all items have prescriptions when required
+ */
+export function validatePrescriptions(
+  items: Array<{
+    requires_prescription: boolean;
+    prescription_image_url?: string | null;
+  }>,
+): { valid: boolean; missingPrescriptions: string[] } {
+  const missingPrescriptions: string[] = [];
+
+  items.forEach((item, index) => {
+    if (item.requires_prescription && !item.prescription_image_url) {
+      missingPrescriptions.push(`Item ${index + 1}: Prescription required`);
+    }
+  });
+
+  return {
+    valid: missingPrescriptions.length === 0,
+    missingPrescriptions,
+  };
+}
+
+/**
+ * Generate queue number display
+ */
+export function formatQueueNumber(queueNumber?: number): string {
+  if (!queueNumber) return "Not in queue";
+  return `Q-${String(queueNumber).padStart(4, "0")}`;
+}
+
+/**
+ * Check if request is fully approved
+ */
+export function isFullyApproved(
+  items: Array<{ quantity: number }>,
+  approvedItems: Array<{ quantity_approved: number }> = [],
+): boolean {
+  const totalRequested = items.reduce((sum, item) => sum + item.quantity, 0);
+  const totalApproved = approvedItems.reduce(
+    (sum, item) => sum + item.quantity_approved,
+    0,
+  );
+  return totalApproved === totalRequested;
+}
+
+/**
+ * Get approval percentage
+ */
+export function getApprovalPercentage(
+  items: Array<{ quantity: number }>,
+  approvedItems: Array<{ quantity_approved: number }> = [],
+): number {
+  const totalRequested = items.reduce((sum, item) => sum + item.quantity, 0);
+  if (totalRequested === 0) return 0;
+
+  const totalApproved = approvedItems.reduce(
+    (sum, item) => sum + item.quantity_approved,
+    0,
+  );
+  return Math.round((totalApproved / totalRequested) * 100);
+}
+
+/**
+ * Group requests by barangay for reports
+ */
+export function groupRequestsByBarangay(
+  requests: Array<{ requester_barangay: string }>,
+) {
+  return requests.reduce(
+    (acc, request) => {
+      const barangay = request.requester_barangay;
+      if (!acc[barangay]) {
+        acc[barangay] = 0;
+      }
+      acc[barangay]++;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+}
+
+/**
+ * Get summary statistics for requests
+ */
+export function getRequestStats(
+  requests: Array<{ status: string; priority: string }>,
+) {
+  return {
+    total: requests.length,
+    pending: requests.filter((r) => r.status === "Pending").length,
+    inQueue: requests.filter((r) => r.status === "In Queue").length,
+    approved: requests.filter((r) => r.status === "Approved").length,
+    completed: requests.filter((r) => r.status === "Completed").length,
+    rejected: requests.filter((r) => r.status === "Rejected").length,
+    cancelled: requests.filter((r) => r.status === "Cancelled").length,
+    emergency: requests.filter((r) => r.priority === "Emergency").length,
+    highPriority: requests.filter((r) => r.priority === "High").length,
+  };
 }
