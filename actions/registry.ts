@@ -10,6 +10,12 @@ import {
 import { revalidatePath } from "next/cache";
 import bcrypt from "bcryptjs";
 
+// ============ SERIALIZATION HELPER ============
+// Strips all MongoDB ObjectIds, Dates, and any objects with toJSON methods
+// so Next.js can safely pass the result from Server → Client Components.
+const serialize = <T>(data: T): T => JSON.parse(JSON.stringify(data));
+
+// ============ GET ALL USERS ============
 export async function getUsers() {
   try {
     await connectToDatabase();
@@ -21,10 +27,10 @@ export async function getUsers() {
 
     const sanitizedUsers = users.map((user) => sanitizeUserForPublic(user));
 
-    return {
+    return serialize({
       success: true,
       data: sanitizedUsers,
-    };
+    });
   } catch (error) {
     console.error("Error fetching users:", error);
     return {
@@ -34,6 +40,7 @@ export async function getUsers() {
   }
 }
 
+// ============ GET USER BY ID ============
 export async function getUserById(userId: string) {
   try {
     await connectToDatabase();
@@ -49,10 +56,10 @@ export async function getUserById(userId: string) {
 
     const sanitizedUser = sanitizeUserForPublic(user);
 
-    return {
+    return serialize({
       success: true,
       data: sanitizedUser,
-    };
+    });
   } catch (error) {
     console.error("Error fetching user:", error);
     return {
@@ -62,6 +69,7 @@ export async function getUserById(userId: string) {
   }
 }
 
+// ============ UPDATE USER STATUS ============
 export async function updateUserStatus(userId: string, status: string) {
   try {
     await connectToDatabase();
@@ -81,10 +89,10 @@ export async function updateUserStatus(userId: string, status: string) {
 
     const sanitizedUser = sanitizeUserForPublic(user);
 
-    return {
+    return serialize({
       success: true,
       data: sanitizedUser,
-    };
+    });
   } catch (error) {
     console.error("Error updating user status:", error);
     return {
@@ -95,11 +103,11 @@ export async function updateUserStatus(userId: string, status: string) {
   }
 }
 
+// ============ CREATE USER ============
 export async function createUser(formData: FormData) {
   try {
     await connectToDatabase();
 
-    // Extract data from FormData
     const userData = {
       first_name: formData.get("first_name") as string,
       middle_name: (formData.get("middle_name") as string) || "",
@@ -124,7 +132,6 @@ export async function createUser(formData: FormData) {
       status: (formData.get("status") as string) || "Pending",
     };
 
-    // Validate the data
     const validatedData = validateUserRegister(userData);
 
     // Check if email already exists
@@ -162,16 +169,17 @@ export async function createUser(formData: FormData) {
       is_email_verified: false,
     });
 
-    // Revalidate the registry page
     revalidatePath("/dashboard/registry");
 
+    // .toObject() converts the Mongoose document to a plain object first,
+    // then sanitize, then serialize the whole return value.
     const sanitizedUser = sanitizeUserForPublic(user.toObject());
 
-    return {
+    return serialize({
       success: true,
       data: sanitizedUser,
       message: "User created successfully",
-    };
+    });
   } catch (error) {
     console.error("Error creating user:", error);
     if (error instanceof Error && error.name === "ZodError") {
