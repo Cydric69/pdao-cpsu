@@ -12,6 +12,8 @@ import {
   Users,
   HeartHandshake,
   UserCog,
+  FileText,
+  CreditCard, // Added for Cards
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -86,7 +88,7 @@ export default function DashboardHeader({ user }: DashboardHeaderProps) {
     setTimeData(timeInfo);
   };
 
-  // Navigation items
+  // Navigation items - Added Applications and Cards
   const navItems = [
     {
       name: "Dashboard",
@@ -97,6 +99,16 @@ export default function DashboardHeader({ user }: DashboardHeaderProps) {
       name: "Registry",
       href: "/dashboard/registry",
       icon: Users,
+    },
+    {
+      name: "Applications",
+      href: "/dashboard/application", // Fixed: changed from "application" to "applications" (plural)
+      icon: FileText,
+    },
+    {
+      name: "Cards", // Added Cards navigation
+      href: "/dashboard/cards",
+      icon: CreditCard,
     },
     {
       name: "Assistance",
@@ -150,6 +162,7 @@ export default function DashboardHeader({ user }: DashboardHeaderProps) {
               </p>
             </div>
           </div>
+
           {/* Center: Date & Time - takes 1/3 and centered */}
           <div className="flex w-1/3 flex-col items-center justify-center">
             {/* Date: "February 11, Monday" */}
@@ -178,6 +191,7 @@ export default function DashboardHeader({ user }: DashboardHeaderProps) {
               </div>
             </div>
           </div>
+
           {/* Right: User & Logout - takes 1/3 */}
           <div className="flex w-1/3 items-center justify-end">
             <div className="flex items-center gap-3">

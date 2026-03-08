@@ -23,12 +23,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { UserListItem } from "@/actions/registry";
+import { UserPublic } from "@/models/User";
 import {
   verifyUser,
   renewUserCard,
   checkCardExpiryStatus,
-} from "@/actions/registrystatus";
+} from "@/actions/registry";
 import {
   getFullName,
   formatDisplayDate,
@@ -52,7 +52,7 @@ import {
 } from "lucide-react";
 
 interface RegistryTableProps {
-  initialUsers: UserListItem[];
+  initialUsers: UserPublic[];
 }
 
 interface FilterState {
@@ -66,13 +66,13 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
     verification: "all",
   });
   const [filteredUsers, setFilteredUsers] =
-    React.useState<UserListItem[]>(initialUsers);
+    React.useState<UserPublic[]>(initialUsers);
   const [loading, setLoading] = React.useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [dialogType, setDialogType] = React.useState<"verify" | "renew" | null>(
     null,
   );
-  const [selectedUser, setSelectedUser] = React.useState<UserListItem | null>(
+  const [selectedUser, setSelectedUser] = React.useState<UserPublic | null>(
     null,
   );
 
@@ -136,7 +136,7 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
     setFilters(newFilters);
   };
 
-  const handleVerify = async (user: UserListItem) => {
+  const handleVerify = async (user: UserPublic) => {
     console.log("Verify button clicked for user:", {
       id: user._id,
       name: getFullName(user),
@@ -147,7 +147,7 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
     setDialogOpen(true);
   };
 
-  const handleRenew = async (user: UserListItem) => {
+  const handleRenew = async (user: UserPublic) => {
     // Check if user has an active card
     if (!user.card_id) {
       toast.error("User does not have an active PWD card");
@@ -219,14 +219,21 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
       }
 
       if (result.success) {
-        toast.success(
-          result.message ||
-            `User ${dialogType === "verify" ? "verified" : "card renewed"} successfully`,
-        );
+        // Check if message exists in the result
+        const successMessage =
+          "message" in result
+            ? result.message
+            : `User ${dialogType === "verify" ? "verified" : "card renewed"} successfully`;
+
+        toast.success(successMessage);
         // Refresh the page data
         window.location.reload();
       } else {
-        toast.error(result.error || `Failed to ${dialogType} user`);
+        // Handle error response
+        const errorMessage =
+          "error" in result ? result.error : `Failed to ${dialogType} user`;
+
+        toast.error(errorMessage);
       }
     } catch (error) {
       toast.error("An unexpected error occurred");
@@ -253,17 +260,17 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
   };
 
   // Helper function to check if user has submitted an application (has pwd_issued_id)
-  const hasSubmittedApplication = (user: UserListItem) => {
+  const hasSubmittedApplication = (user: UserPublic) => {
     return user.pwd_issued_id !== null && user.pwd_issued_id !== undefined;
   };
 
   // Helper function to check if user has an issued card
-  const hasIssuedCard = (user: UserListItem) => {
+  const hasIssuedCard = (user: UserPublic) => {
     return user.card_id !== null && user.card_id !== undefined;
   };
 
   // Helper function to get application status display
-  const getApplicationStatusDisplay = (user: UserListItem) => {
+  const getApplicationStatusDisplay = (user: UserPublic) => {
     if (!hasSubmittedApplication(user)) {
       return {
         icon: <FileQuestion className="h-3 w-3 text-gray-400" />,
@@ -297,7 +304,7 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
   };
 
   // Helper function to get PWD card status display
-  const getCardStatusDisplay = (user: UserListItem) => {
+  const getCardStatusDisplay = (user: UserPublic) => {
     if (!hasIssuedCard(user)) {
       return {
         icon: <IdCard className="h-3 w-3 text-gray-400" />,
@@ -480,9 +487,6 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
 
                       <TableCell>
                         <div className="flex items-center justify-center gap-2">
-                          {/* ──────────────────────────────────────────────── */}
-                          {/*               FIXED VERIFY BUTTON                */}
-                          {/* ──────────────────────────────────────────────── */}
                           <Button
                             variant="outline"
                             size="sm"
@@ -519,7 +523,6 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
                             )}
                           </Button>
 
-                          {/* Renew Button - unchanged */}
                           <Button
                             variant="outline"
                             size="sm"
@@ -563,14 +566,12 @@ export function RegistryTable({ initialUsers }: RegistryTableProps) {
             </TableBody>
           </Table>
 
-          {/* Results count */}
           <div className="border-t bg-gray-50 px-4 py-2 text-xs text-muted-foreground">
             Showing {filteredUsers.length} of {initialUsers.length} users
           </div>
         </div>
       )}
 
-      {/* Confirmation Dialog */}
       <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

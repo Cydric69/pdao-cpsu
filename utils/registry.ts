@@ -1,6 +1,6 @@
-import { UserListItem } from "@/actions/registry";
+import { UserPublic } from "@/models/User";
 
-export function getFullName(user: UserListItem): string {
+export function getFullName(user: UserPublic): string {
   const parts = [
     user.first_name,
     user.middle_name,

@@ -12,7 +12,8 @@ export default async function UserDetailsPage({
 }) {
   const result = await getUserById(params.userId);
 
-  if (!result.success || !result.data) {
+  // Fixed: Check if result has data property before accessing it
+  if (!result.success || !("data" in result) || !result.data) {
     notFound();
   }
 
