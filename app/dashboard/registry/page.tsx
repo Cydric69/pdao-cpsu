@@ -18,10 +18,12 @@ export default function RegistryPage() {
       setLoading(true);
       const result = await getUsers();
 
-      if (result.success) {
+      if (result.success && "data" in result) {
         setUsers(result.data || []);
-      } else {
+      } else if ("error" in result) {
         setError(result.error || "Failed to fetch users");
+      } else {
+        setError("Failed to fetch users");
       }
     } catch (err) {
       setError("An unexpected error occurred");

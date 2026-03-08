@@ -3,6 +3,9 @@ import { validateSession } from "@/actions/auth";
 import { redirect } from "next/navigation";
 import DashboardHeader from "@/components/dashboard/header";
 
+// Add this line to make the layout dynamic (fixes cookies error)
+export const dynamic = "force-dynamic";
+
 export default async function DashboardLayout({
   children,
 }: {

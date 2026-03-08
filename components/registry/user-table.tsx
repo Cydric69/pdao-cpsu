@@ -46,9 +46,10 @@ import { format } from "date-fns";
 import { updateUserStatus } from "@/actions/registry";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import { UserPublic } from "@/models/User";
 
 interface UserTableProps {
-  users: any[];
+  users: UserPublic[];
   onUserUpdate: () => void;
   showVerificationBadge?: boolean;
   title?: string;
@@ -107,9 +108,14 @@ export function UserTable({
         });
         onUserUpdate();
       } else {
+        // Fix: Check if error property exists before accessing it
+        const errorMessage =
+          "error" in result
+            ? result.error
+            : "An error occurred while updating the status";
+
         toast.error("Failed to update status", {
-          description:
-            result.error || "An error occurred while updating the status",
+          description: errorMessage,
         });
       }
     } catch (error) {

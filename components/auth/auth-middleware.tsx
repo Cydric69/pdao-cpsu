@@ -1,14 +1,15 @@
-// components/auth-middleware.tsx - UPDATED
+// components/auth-middleware.tsx - FIXED
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/lib/store/auth-store";
 
 const publicRoutes = ["/", "/login", "/register"];
 const protectedRoutes = ["/dashboard", "/profile", "/settings"];
 
-export function AuthMiddleware({ children }: { children: React.ReactNode }) {
+// Separate component that uses useSearchParams
+function AuthMiddlewareContent({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -63,4 +64,22 @@ export function AuthMiddleware({ children }: { children: React.ReactNode }) {
   }
 
   return <>{children}</>;
+}
+
+// Main component with Suspense boundary
+export function AuthMiddleware({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="text-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto"></div>
+            <p className="mt-4 text-sm text-gray-600">Loading...</p>
+          </div>
+        </div>
+      }
+    >
+      <AuthMiddlewareContent>{children}</AuthMiddlewareContent>
+    </Suspense>
+  );
 }

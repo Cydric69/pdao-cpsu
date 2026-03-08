@@ -121,8 +121,18 @@ export function CreateUserDialog({ onUserCreated }: CreateUserDialogProps) {
         form.reset();
         onUserCreated();
       } else {
-        toast.error(result.error || "Failed to create user");
-        if (result.validationErrors) {
+        // Fixed: Check if error property exists before accessing it
+        const errorMessage =
+          "error" in result
+            ? result.error
+            : "message" in result
+              ? result.message
+              : "Failed to create user";
+
+        toast.error(errorMessage);
+
+        // Fixed: Check if validationErrors exists before accessing it
+        if ("validationErrors" in result && result.validationErrors) {
           console.error("Validation errors:", result.validationErrors);
         }
       }

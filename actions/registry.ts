@@ -195,3 +195,204 @@ export async function createUser(formData: FormData) {
     };
   }
 }
+
+// ============ VERIFY USER ============
+export async function verifyUser(userId: string) {
+  try {
+    await connectToDatabase();
+
+    // Check if user exists
+    const existingUser = await UserModel.findOne({ user_id: userId });
+    if (!existingUser) {
+      return {
+        success: false,
+        error: "User not found",
+      };
+    }
+
+    // Check if user is already verified
+    if (existingUser.is_verified) {
+      return {
+        success: false,
+        error: "User is already verified",
+      };
+    }
+
+    // Generate a unique PWD issued ID
+    const pwdIssuedId = `PWD-${new Date().toISOString().split("T")[0].replace(/-/g, "")}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+    // Generate a unique card ID
+    const cardId = `CARD-${new Date().toISOString().split("T")[0].replace(/-/g, "")}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+    // Set expiry date to 3 years from now
+    const expiryDate = new Date();
+    expiryDate.setFullYear(expiryDate.getFullYear() + 3);
+
+    const user = await UserModel.findOneAndUpdate(
+      { user_id: userId },
+      {
+        is_verified: true,
+        pwd_issued_id: pwdIssuedId,
+        card_id: cardId,
+        card_expiry_date: expiryDate,
+        status: "Active",
+        verified_at: new Date(),
+        renewal_count: 0,
+      },
+      { new: true },
+    ).lean();
+
+    revalidatePath("/dashboard/registry");
+    revalidatePath(`/dashboard/registry/${userId}`);
+
+    const sanitizedUser = sanitizeUserForPublic(user);
+
+    return serialize({
+      success: true,
+      message: "User verified successfully",
+      data: sanitizedUser,
+    });
+  } catch (error) {
+    console.error("Error verifying user:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to verify user",
+    };
+  }
+}
+
+// ============ RENEW USER CARD ============
+export async function renewUserCard(userId: string) {
+  try {
+    await connectToDatabase();
+
+    // Check if user exists
+    const existingUser = await UserModel.findOne({ user_id: userId });
+    if (!existingUser) {
+      return {
+        success: false,
+        error: "User not found",
+      };
+    }
+
+    // Check if user is verified
+    if (!existingUser.is_verified) {
+      return {
+        success: false,
+        error: "User must be verified first",
+      };
+    }
+
+    // Check if user has a card
+    if (!existingUser.card_id) {
+      return {
+        success: false,
+        error: "No active card found to renew",
+      };
+    }
+
+    // Generate a new card ID
+    const newCardId = `CARD-${new Date().toISOString().split("T")[0].replace(/-/g, "")}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+    // Set new expiry date to 3 years from now
+    const newExpiryDate = new Date();
+    newExpiryDate.setFullYear(newExpiryDate.getFullYear() + 3);
+
+    // Increment renewal count
+    const currentRenewalCount = existingUser.renewal_count || 0;
+
+    const user = await UserModel.findOneAndUpdate(
+      { user_id: userId },
+      {
+        card_id: newCardId,
+        card_expiry_date: newExpiryDate,
+        last_renewed_at: new Date(),
+        renewal_count: currentRenewalCount + 1,
+      },
+      { new: true },
+    ).lean();
+
+    revalidatePath("/dashboard/registry");
+    revalidatePath(`/dashboard/registry/${userId}`);
+
+    const sanitizedUser = sanitizeUserForPublic(user);
+
+    return serialize({
+      success: true,
+      message: "Card renewed successfully",
+      data: sanitizedUser,
+    });
+  } catch (error) {
+    console.error("Error renewing card:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to renew card",
+    };
+  }
+}
+
+// ============ CHECK CARD EXPIRY STATUS ============
+export async function checkCardExpiryStatus(userId: string) {
+  try {
+    await connectToDatabase();
+
+    const user = await UserModel.findOne({ user_id: userId })
+      .select("card_id card_expiry_date is_verified renewal_count")
+      .lean();
+
+    if (!user) {
+      return {
+        success: false,
+        error: "User not found",
+      };
+    }
+
+    if (!user.is_verified) {
+      return {
+        success: true,
+        status: "not_verified",
+        message: "User is not verified",
+      };
+    }
+
+    if (!user.card_id || !user.card_expiry_date) {
+      return {
+        success: true,
+        status: "no_card",
+        message: "No active card found",
+      };
+    }
+
+    const today = new Date();
+    const expiryDate = new Date(user.card_expiry_date);
+    const daysUntilExpiry = Math.ceil(
+      (expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+    );
+
+    if (daysUntilExpiry < 0) {
+      return {
+        success: true,
+        status: "expired",
+        message: "Card has expired",
+        daysUntilExpiry,
+        expiryDate: user.card_expiry_date,
+      };
+    }
+
+    return {
+      success: true,
+      status: "valid",
+      message: "Card is valid",
+      daysUntilExpiry,
+      expiryDate: user.card_expiry_date,
+      renewalCount: user.renewal_count || 0,
+    };
+  } catch (error) {
+    console.error("Error checking card expiry:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to check card status",
+    };
+  }
+}
