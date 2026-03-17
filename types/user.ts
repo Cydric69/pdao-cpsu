@@ -53,9 +53,13 @@ export const UserSchema = z.object({
     .optional()
     .nullable()
     .default(null),
+  // ✅ Fixed: matches actual card ID format e.g. 06-4511-021-9234510
   card_id: z
     .string()
-    .regex(/^CARD-\d{6}$/, "Invalid card ID format (CARD-######)")
+    .regex(
+      /^\d{2}-\d{4}-\d{3}-\d{7}$/,
+      "Invalid card ID format (XX-XXXX-XXX-XXXXXXX)",
+    )
     .optional()
     .nullable()
     .default(null),

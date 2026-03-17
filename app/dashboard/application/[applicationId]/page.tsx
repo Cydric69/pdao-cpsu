@@ -1,4 +1,3 @@
-// app/dashboard/applications/[applicationId]/page.tsx
 import { getApplicationById } from "@/actions/applications";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +26,7 @@ import {
   AlertCircle,
   Download,
   Eye,
+  Bell,
 } from "lucide-react";
 import { IApplication } from "@/models/Application";
 
@@ -122,6 +122,12 @@ export default async function ApplicationDetailsPage({
           </div>
         </div>
         <div className="flex gap-2">
+          <Link href="/dashboard/notifications">
+            <Button variant="outline" size="sm">
+              <Bell className="h-4 w-4 mr-2" />
+              Notifications
+            </Button>
+          </Link>
           <Button variant="outline" size="sm">
             <Download className="h-4 w-4 mr-2" />
             Export PDF
