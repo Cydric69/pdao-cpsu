@@ -17,7 +17,6 @@ import {
 import { format } from "date-fns";
 import Link from "next/link";
 import {
-  FileText,
   Plus,
   Eye,
   Search,
@@ -27,15 +26,21 @@ import {
   XCircle,
   Clock,
   AlertCircle,
+  Bell,
 } from "lucide-react";
 import { ApplicationDetailsModal } from "@/components/application/application-details-modal";
+import { NewApplicationModal } from "@/components/application/new-application-modal";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 
 // Get current user role (you'll need to implement this based on your auth)
 const getUserRole = () => {
-  // This should come from your auth context/session
-  return "admin"; // or "approver" or "viewer"
+  return "admin"; // or "approver" or "viewer" or "MSWD-CSWDO-PDAO"
+};
+
+// Get current user ID (you'll need to implement this based on your auth)
+const getCurrentUserId = () => {
+  return "current-user-id"; // Replace with actual user ID from your auth
 };
 
 export default function ApplicationsPage() {
@@ -46,9 +51,11 @@ export default function ApplicationsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedApplication, setSelectedApplication] = useState<any>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isNewModalOpen, setIsNewModalOpen] = useState(false);
 
   const router = useRouter();
   const userRole = getUserRole();
+  const currentUserId = getCurrentUserId();
 
   const fetchApplications = async () => {
     setIsLoading(true);
@@ -74,7 +81,6 @@ export default function ApplicationsPage() {
   useEffect(() => {
     let filtered = applications;
 
-    // Apply search filter
     if (searchTerm) {
       filtered = filtered.filter(
         (app) =>
@@ -88,7 +94,6 @@ export default function ApplicationsPage() {
       );
     }
 
-    // Apply status filter
     if (statusFilter !== "all") {
       filtered = filtered.filter((app) => app.status === statusFilter);
     }
@@ -101,14 +106,30 @@ export default function ApplicationsPage() {
     setIsModalOpen(true);
   };
 
+  // REMOVED: createNotificationForUser function - now handled in server action
+
   const handleApprove = async (applicationId: string, notes?: string) => {
     try {
+      const application = applications.find(
+        (app) =>
+          app.application_id === applicationId || app._id === applicationId,
+      );
+
+      if (!application) {
+        toast.error("Application not found");
+        return;
+      }
+
       const result = await reviewApplication(applicationId, "approve", {
         admin_notes: notes,
       });
+
       if (result.success) {
+        // REMOVED: createNotificationForUser call - now handled in server action
         await fetchApplications();
-        toast.success("Application approved successfully");
+        toast.success(
+          "Application approved successfully. Email and notification sent to applicant.",
+        );
       } else {
         toast.error(result.error || "Failed to approve application");
       }
@@ -123,13 +144,27 @@ export default function ApplicationsPage() {
     notes?: string,
   ) => {
     try {
+      const application = applications.find(
+        (app) =>
+          app.application_id === applicationId || app._id === applicationId,
+      );
+
+      if (!application) {
+        toast.error("Application not found");
+        return;
+      }
+
       const result = await reviewApplication(applicationId, "reject", {
         rejection_reason: reason,
         admin_notes: notes,
       });
+
       if (result.success) {
+        // REMOVED: createNotificationForUser call - now handled in server action
         await fetchApplications();
-        toast.success("Application rejected");
+        toast.success(
+          "Application rejected. Email and notification sent to applicant.",
+        );
       } else {
         toast.error(result.error || "Failed to reject application");
       }
@@ -188,16 +223,20 @@ export default function ApplicationsPage() {
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
           </Button>
-          <Link href="/dashboard/applications/new">
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              New Application
+          <Link href="/dashboard/notifications">
+            <Button variant="outline">
+              <Bell className="h-4 w-4 mr-2" />
+              Notifications
             </Button>
           </Link>
+          <Button onClick={() => setIsNewModalOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            New Application
+          </Button>
         </div>
       </div>
 
-      {/* Stats Cards - Updated to 4 cards instead of 5 */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-6">
@@ -313,6 +352,11 @@ export default function ApplicationsPage() {
                         <span>
                           brgy: {app.residence_address?.barangay || "n/a"}
                         </span>
+                        {app.contact_details?.email && (
+                          <span className="flex items-center gap-1">
+                            <span>📧</span> {app.contact_details.email}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -343,18 +387,29 @@ export default function ApplicationsPage() {
             setSelectedApplication(null);
           }}
           onApprove={
-            userRole === "admin" || userRole === "approver"
+            userRole === "admin" ||
+            userRole === "approver" ||
+            userRole === "MSWD-CSWDO-PDAO"
               ? handleApprove
               : undefined
           }
           onReject={
-            userRole === "admin" || userRole === "approver"
+            userRole === "admin" ||
+            userRole === "approver" ||
+            userRole === "MSWD-CSWDO-PDAO"
               ? handleReject
               : undefined
           }
           userRole={userRole}
         />
       )}
+
+      {/* New Application Modal */}
+      <NewApplicationModal
+        isOpen={isNewModalOpen}
+        onClose={() => setIsNewModalOpen(false)}
+        onSuccess={fetchApplications}
+      />
     </div>
   );
 }
