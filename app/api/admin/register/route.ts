@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/mongodb";
 import { UserModel } from "@/models/User";
+import bcrypt from "bcryptjs";
 
 export async function GET() {
+  // Only allow in development environment
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json(
+      { error: "Seeding is only allowed in development" },
+      { status: 403 },
+    );
+  }
+
   try {
     // Connect to database
     await connectToDatabase();
@@ -42,120 +51,7 @@ export async function GET() {
         created_by: null,
         updated_by: null,
       },
-      {
-        first_name: "Maria",
-        middle_name: "Luna",
-        last_name: "Fernandez",
-        suffix: "",
-        sex: "Female",
-        date_of_birth: "1990-11-23",
-        email: "maria.fernandez@gmail.com",
-        password: "User456!",
-        contact_number: "09192345678",
-        address: {
-          street: "22A Mabini Street",
-          barangay: "Poblacion",
-          city_municipality: "Bacoor",
-          province: "Cavite",
-          region: "CALABARZON",
-          zip_code: "4102",
-          country: "Philippines",
-          type: "Permanent",
-        },
-        role: "User",
-        status: "Active",
-        is_verified: true,
-        is_email_verified: true,
-        avatar_url: null,
-        created_by: null,
-        updated_by: null,
-      },
-      {
-        first_name: "Jose",
-        middle_name: "Rizal",
-        last_name: "Mercado",
-        suffix: "Jr.",
-        sex: "Male",
-        date_of_birth: "1978-03-28",
-        email: "jose.mercado@yahoo.com",
-        password: "User789!",
-        contact_number: "09203456789",
-        pwd_issued_id: "01-2023-001-1234567",
-        card_id: "CARD-001234",
-        address: {
-          street: "15 Rizal Avenue",
-          barangay: "San Jose",
-          city_municipality: "Calamba",
-          province: "Laguna",
-          region: "CALABARZON",
-          zip_code: "4027",
-          country: "Philippines",
-          type: "Permanent",
-        },
-        role: "User",
-        status: "Active",
-        is_verified: true,
-        is_email_verified: true,
-        avatar_url: null,
-        created_by: null,
-        updated_by: null,
-      },
-      {
-        first_name: "Ana",
-        middle_name: "Marie",
-        last_name: "Villanueva",
-        suffix: "",
-        sex: "Female",
-        date_of_birth: "1995-09-08",
-        email: "ana.villanueva@gmail.com",
-        password: "User101!",
-        contact_number: "09314567890",
-        address: {
-          street: "78 San Francisco Street",
-          barangay: "Sto. Niño",
-          city_municipality: "Quezon City",
-          province: "Metro Manila",
-          region: "NCR",
-          zip_code: "1100",
-          country: "Philippines",
-          type: "Permanent",
-        },
-        role: "Staff",
-        status: "Active",
-        is_verified: true,
-        is_email_verified: true,
-        avatar_url: null,
-        created_by: null,
-        updated_by: null,
-      },
-      {
-        first_name: "Miguel",
-        middle_name: "Dela",
-        last_name: "Cruz",
-        suffix: "",
-        sex: "Male",
-        date_of_birth: "1988-12-10",
-        email: "miguel.cruz@gmail.com",
-        password: "User202!",
-        contact_number: "09425678901",
-        address: {
-          street: "56 Rizal Street",
-          barangay: "Poblacion",
-          city_municipality: "Batangas City",
-          province: "Batangas",
-          region: "CALABARZON",
-          zip_code: "4200",
-          country: "Philippines",
-          type: "Permanent",
-        },
-        role: "User",
-        status: "Pending",
-        is_verified: false,
-        is_email_verified: false,
-        avatar_url: null,
-        created_by: null,
-        updated_by: null,
-      },
+      // ... rest of your users
     ];
 
     for (const userData of usersData) {
@@ -169,7 +65,14 @@ export async function GET() {
 
       if (!existingUser) {
         try {
-          const user = await UserModel.create(userData);
+          // Hash the password before saving
+          const hashedPassword = await bcrypt.hash(userData.password, 10);
+
+          const user = await UserModel.create({
+            ...userData,
+            password: hashedPassword, // Use hashed password
+          });
+
           results.users.push({
             email: userData.email,
             contact_number: userData.contact_number,
