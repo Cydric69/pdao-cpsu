@@ -1,16 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   getCards,
   revokeCard,
   getCardStatistics,
-  approveAndIssueCard,
+  issueCard,
+  activatePendingCard,
   rejectApplication,
   updateCard,
-  previewCardIssuance,
 } from "@/actions/cards";
-import type { CardIssuancePreview } from "@/actions/cards";
 import { getApplications } from "@/actions/applications";
 import { getCurrentUser } from "@/actions/auth";
 import { Button } from "@/components/ui/button";
@@ -40,6 +39,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { format } from "date-fns";
 import {
   CreditCard,
@@ -62,11 +62,12 @@ import {
   ShieldOff,
   TrendingUp,
   Sparkles,
+  Info,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface CardItem {
   _id: string;
@@ -112,7 +113,6 @@ interface Application {
   emergency_contact_number?: string;
   status: string;
   created_at: string;
-  // null = new applicant, string = existing applicant (renewal)
   card_id?: string | null;
 }
 
@@ -124,26 +124,7 @@ interface Statistics {
   pending: number;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const DISABILITY_TYPE_MAP: Record<string, string> = {
-  "Deaf or Hard of Hearing": "Hearing Impairment",
-  Deaf: "Hearing Impairment",
-  "Hard of Hearing": "Hearing Impairment",
-  "Hearing Impairment": "Hearing Impairment",
-  "Physical Disability": "Physical Disability",
-  "Visual Impairment": "Visual Impairment",
-  "Speech Impairment": "Speech Impairment",
-  "Intellectual Disability": "Intellectual Disability",
-  "Learning Disability": "Learning Disability",
-  "Mental Disability": "Mental Disability",
-  "Multiple Disabilities": "Multiple Disabilities",
-  ADHD: "Intellectual Disability",
-  Autism: "Intellectual Disability",
-  Others: "Others",
-};
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function safeFormat(value: any, fmt: string): string {
   if (!value) return "N/A";
@@ -178,7 +159,23 @@ function calculateAge(dob: any): number | null {
 }
 
 function mapDisabilityType(type: string): string {
-  return DISABILITY_TYPE_MAP[type] || "Others";
+  const map: Record<string, string> = {
+    "Deaf or Hard of Hearing": "Hearing Impairment",
+    Deaf: "Hearing Impairment",
+    "Hard of Hearing": "Hearing Impairment",
+    "Hearing Impairment": "Hearing Impairment",
+    "Physical Disability": "Physical Disability",
+    "Visual Impairment": "Visual Impairment",
+    "Speech Impairment": "Speech Impairment",
+    "Intellectual Disability": "Intellectual Disability",
+    "Learning Disability": "Learning Disability",
+    "Mental Disability": "Mental Disability",
+    "Multiple Disabilities": "Multiple Disabilities",
+    ADHD: "Intellectual Disability",
+    Autism: "Intellectual Disability",
+    Others: "Others",
+  };
+  return map[type] || "Others";
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -198,7 +195,7 @@ function StatusBadge({
       </span>
     );
   }
-  const map: Record<string, { dot: string; text: string; bg: string }> = {
+  const styles: Record<string, { dot: string; text: string; bg: string }> = {
     Active: {
       dot: "bg-emerald-500",
       text: "text-emerald-700",
@@ -220,7 +217,7 @@ function StatusBadge({
       bg: "bg-slate-50 border-slate-200",
     },
   };
-  const s = map[status] ?? map["Expired"];
+  const s = styles[status] ?? styles["Expired"];
   return (
     <span
       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold border ${s.bg} ${s.text}`}
@@ -293,6 +290,7 @@ function DetailRow({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CardsPage() {
+  // ── Card + application data ──
   const [cards, setCards] = useState<CardItem[]>([]);
   const [filteredCards, setFilteredCards] = useState<CardItem[]>([]);
   const [pendingCards, setPendingCards] = useState<CardItem[]>([]);
@@ -307,31 +305,40 @@ export default function CardsPage() {
   );
   const [stats, setStats] = useState<Statistics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // ── Filters ──
   const [searchTerm, setSearchTerm] = useState("");
   const [pendingSearchTerm, setPendingSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [barangayFilter, setBarangayFilter] = useState<string>("all");
+
+  // ── Selected items ──
   const [selectedCard, setSelectedCard] = useState<CardItem | null>(null);
   const [selectedApplication, setSelectedApplication] =
     useState<Application | null>(null);
-  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
 
-  // Issue Card Preview modal — only for new applicants (card_id is null)
-  const [isIssueModalOpen, setIsIssueModalOpen] = useState(false);
-  const [issuePreview, setIssuePreview] = useState<CardIssuancePreview | null>(
-    null,
+  // ── Modals ──
+  const [isViewCardModalOpen, setIsViewCardModalOpen] = useState(false);
+
+  // Shared Card ID modal — mode tracks which flow opened it
+  const [isCardIdModalOpen, setIsCardIdModalOpen] = useState(false);
+  const [cardIdInput, setCardIdInput] = useState("");
+  const [cardIdError, setCardIdError] = useState("");
+  const [cardIdModalMode, setCardIdModalMode] = useState<"issue" | "activate">(
+    "issue",
   );
-  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const cardIdInputRef = useRef<HTMLInputElement>(null);
 
-  // Unified reject dialog
+  // Reject / revoke dialogs
   const [rejectTarget, setRejectTarget] = useState<
     "card" | "application" | null
   >(null);
   const [showRejectDialog, setShowRejectDialog] = useState(false);
-  // Revoke dialog — Active cards only
   const [showRevokeDialog, setShowRevokeDialog] = useState(false);
   const [revokeReason, setRevokeReason] = useState("");
   const [rejectReason, setRejectReason] = useState("");
+
+  // ── Loading states ──
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [userRole, setUserRole] = useState<string>("viewer");
   const [isLoadingRole, setIsLoadingRole] = useState(true);
@@ -364,7 +371,7 @@ export default function CardsPage() {
     "mswd-cswdo-pdao",
   ].includes(userRole.toLowerCase());
 
-  // ── Data ──────────────────────────────────────────────────────────────────
+  // ── Data fetching ─────────────────────────────────────────────────────────
   const fetchData = async () => {
     setIsLoading(true);
     try {
@@ -375,26 +382,28 @@ export default function CardsPage() {
       ]);
 
       if (cardsResult.success) {
-        const issued = cardsResult.data.filter(
-          (c: CardItem) => c.status !== "Pending",
+        const issued = (cardsResult.data as CardItem[]).filter(
+          (c) => c.status !== "Pending",
         );
-        const pending = cardsResult.data.filter(
-          (c: CardItem) => c.status === "Pending",
+        const pending = (cardsResult.data as CardItem[]).filter(
+          (c) => c.status === "Pending",
         );
         setCards(issued);
         setFilteredCards(issued);
         setPendingCards(pending);
         setFilteredPendingCards(pending);
-      } else toast.error("Failed to fetch cards");
+      } else {
+        toast.error("Failed to fetch cards");
+      }
 
       if (statsResult.success) setStats(statsResult.data ?? null);
 
       if (appsResult.success) {
-        const pending = appsResult.data.filter(
-          (app: Application) => app.status === "Submitted" && !app.card_id,
+        const submitted = (appsResult.data as Application[]).filter(
+          (a) => a.status === "Submitted",
         );
-        setPendingApplications(pending);
-        setFilteredPendingApps(pending);
+        setPendingApplications(submitted);
+        setFilteredPendingApps(submitted);
       }
     } catch {
       toast.error("Error loading data");
@@ -424,50 +433,125 @@ export default function CardsPage() {
   }, [searchTerm, statusFilter, barangayFilter, cards]);
 
   useEffect(() => {
-    let f = pendingCards;
-    if (pendingSearchTerm)
-      f = f.filter(
+    let fc = pendingCards;
+    let fa = pendingApplications;
+    if (pendingSearchTerm) {
+      const q = pendingSearchTerm.toLowerCase();
+      fc = fc.filter(
         (c) =>
-          c.name?.toLowerCase().includes(pendingSearchTerm.toLowerCase()) ||
-          c.card_id?.toLowerCase().includes(pendingSearchTerm.toLowerCase()) ||
-          c.user_id?.toLowerCase().includes(pendingSearchTerm.toLowerCase()),
+          c.name?.toLowerCase().includes(q) ||
+          c.card_id?.toLowerCase().includes(q) ||
+          c.user_id?.toLowerCase().includes(q),
       );
-    setFilteredPendingCards(f);
-  }, [pendingSearchTerm, pendingCards]);
-
-  useEffect(() => {
-    let f = pendingApplications;
-    if (pendingSearchTerm)
-      f = f.filter(
-        (app) =>
-          `${app.first_name} ${app.last_name}`
-            .toLowerCase()
-            .includes(pendingSearchTerm.toLowerCase()) ||
-          app.application_id
-            ?.toLowerCase()
-            .includes(pendingSearchTerm.toLowerCase()) ||
-          app.user_id?.toLowerCase().includes(pendingSearchTerm.toLowerCase()),
+      fa = fa.filter(
+        (a) =>
+          `${a.first_name} ${a.last_name}`.toLowerCase().includes(q) ||
+          a.application_id?.toLowerCase().includes(q) ||
+          a.user_id?.toLowerCase().includes(q),
       );
-    setFilteredPendingApps(f);
-  }, [pendingSearchTerm, pendingApplications]);
+    }
+    setFilteredPendingCards(fc);
+    setFilteredPendingApps(fa);
+  }, [pendingSearchTerm, pendingCards, pendingApplications]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
-  const handleViewCard = (card: CardItem) => {
-    setSelectedCard(card);
-    setIsViewModalOpen(true);
+  // Opens the Card ID modal for a submitted application
+  const handleApproveClick = (application: Application) => {
+    setSelectedApplication(application);
+    setSelectedCard(null);
+    setCardIdModalMode("issue");
+    setCardIdInput("");
+    setCardIdError("");
+    setIsCardIdModalOpen(true);
+    setTimeout(() => cardIdInputRef.current?.focus(), 150);
   };
 
+  // Opens the Card ID modal for a pending card (card_id is null in DB)
+  const handleActivatePendingCardClick = (card: CardItem) => {
+    setSelectedCard(card);
+    setSelectedApplication(null);
+    setCardIdModalMode("activate");
+    setCardIdInput("");
+    setCardIdError("");
+    setIsCardIdModalOpen(true);
+    setTimeout(() => cardIdInputRef.current?.focus(), 150);
+  };
+
+  // Unified submit for both issue and activate flows
+  const handleCardIdSubmit = async () => {
+    const trimmed = cardIdInput.trim();
+    if (!trimmed) {
+      setCardIdError("Please enter the card ID");
+      cardIdInputRef.current?.focus();
+      return;
+    }
+    setCardIdError("");
+    setIsSubmitting(true);
+
+    try {
+      if (cardIdModalMode === "issue" && selectedApplication) {
+        const result = await issueCard(
+          selectedApplication.application_id,
+          trimmed,
+        );
+        if (result.success) {
+          toast.success(result.message || "Card issued successfully");
+          setIsCardIdModalOpen(false);
+          setCardIdInput("");
+          setSelectedApplication(null);
+          await fetchData();
+          setActiveTab("cards");
+        } else {
+          // Show all errors inline — includes format errors and duplicates
+          setCardIdError(result.error || "Failed to issue card");
+          cardIdInputRef.current?.focus();
+        }
+      } else if (cardIdModalMode === "activate" && selectedCard) {
+        const result = await activatePendingCard(selectedCard._id, trimmed);
+        if (result.success) {
+          toast.success(result.message || "Card activated successfully");
+          setIsCardIdModalOpen(false);
+          setCardIdInput("");
+          setSelectedCard(null);
+          await fetchData();
+          setActiveTab("cards");
+        } else {
+          // Show all errors inline — includes format errors and duplicates
+          setCardIdError(result.error || "Failed to activate card");
+          cardIdInputRef.current?.focus();
+        }
+      }
+    } catch {
+      toast.error("Error processing card");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Close card ID modal cleanly
+  const handleCardIdModalClose = () => {
+    if (isSubmitting) return;
+    setIsCardIdModalOpen(false);
+    setCardIdInput("");
+    setCardIdError("");
+    setSelectedApplication(null);
+    setSelectedCard(null);
+  };
+
+  // Revoke
   const handleRevokeClick = () => {
-    setIsViewModalOpen(false);
+    setIsViewCardModalOpen(false);
     setRevokeReason("");
     setShowRevokeDialog(true);
   };
+
   const handleRevokeCancel = () => {
     setShowRevokeDialog(false);
     setRevokeReason("");
-    if (selectedCard) setIsViewModalOpen(true);
+    if (selectedCard) setIsViewCardModalOpen(true);
   };
+
   const handleRevoke = async () => {
     if (!selectedCard || !revokeReason.trim()) return;
     setIsSubmitting(true);
@@ -476,11 +560,13 @@ export default function CardsPage() {
       if (result.success) {
         toast.success(result.message || "Card revoked");
         setShowRevokeDialog(false);
-        setIsViewModalOpen(false);
+        setIsViewCardModalOpen(false);
         setSelectedCard(null);
         setRevokeReason("");
         await fetchData();
-      } else toast.error(result.error || "Failed to revoke card");
+      } else {
+        toast.error(result.error || "Failed to revoke card");
+      }
     } catch {
       toast.error("Error revoking card");
     } finally {
@@ -488,94 +574,12 @@ export default function CardsPage() {
     }
   };
 
-  // ── Issue Card: NEW applicant (card_id is null) → save Pending card, show preview modal ──
-  const handleIssueNewApplicant = async (application: Application) => {
-    setIsLoadingPreview(true);
-    setSelectedApplication(application);
-    try {
-      const result = await previewCardIssuance(application.application_id);
-      if (result.success) {
-        setIssuePreview(result.data);
-        setIsIssueModalOpen(true);
-        // Refresh so the new Pending card appears in the Pending Cards section
-        await fetchData();
-      } else {
-        toast.error(result.error || "Failed to generate card preview");
-      }
-    } catch {
-      toast.error("Error loading preview");
-    } finally {
-      setIsLoadingPreview(false);
-    }
-  };
-
-  // ── Issue Card: EXISTING applicant (card_id already set) → issue directly ──
-  const handleIssueExistingApplicant = async (application: Application) => {
-    setIsSubmitting(true);
-    try {
-      const result = await approveAndIssueCard(application.application_id);
-      if (result.success) {
-        toast.success(result.message || "Card issued successfully");
-        setSelectedApplication(null);
-        await fetchData();
-        setActiveTab("cards");
-      } else toast.error(result.error || "Failed to issue card");
-    } catch {
-      toast.error("Error issuing card");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // ── Confirm issue after preview (new applicant) ──────────────────────────
-  const handleConfirmIssue = async () => {
-    if (!selectedApplication) return;
-    setIsSubmitting(true);
-    try {
-      const result = await approveAndIssueCard(
-        selectedApplication.application_id,
-      );
-      if (result.success) {
-        toast.success(result.message || "Card issued successfully");
-        setIsIssueModalOpen(false);
-        setIssuePreview(null);
-        setSelectedApplication(null);
-        await fetchData();
-        setActiveTab("cards");
-      } else toast.error(result.error || "Failed to issue card");
-    } catch {
-      toast.error("Error issuing card");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // ── Activate a Pending card (already in DB) ──────────────────────────────
-  const handleActivatePendingCard = async (card: CardItem) => {
-    setIsSubmitting(true);
-    try {
-      const result = await updateCard(card.card_id, {
-        status: "Active",
-        type_of_disability: mapDisabilityType(card.type_of_disability),
-      });
-      if (result.success) {
-        toast.success("Card issued and activated successfully");
-        await fetchData();
-        setActiveTab("cards");
-      } else toast.error(result.error || "Failed to activate card");
-    } catch {
-      toast.error("Error activating card");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // ── Reject pending card → Revoked + admin_notes ──────────────────────────
+  // Reject pending card → Revoked
   const handleRejectPendingCard = async () => {
     if (!selectedCard || !rejectReason.trim()) return;
     setIsSubmitting(true);
     try {
-      const result = await updateCard(selectedCard.card_id, {
+      const result = await updateCard(selectedCard._id, {
         status: "Revoked",
         admin_notes: rejectReason.trim(),
       });
@@ -585,7 +589,9 @@ export default function CardsPage() {
         setSelectedCard(null);
         setRejectReason("");
         await fetchData();
-      } else toast.error(result.error || "Failed to reject card");
+      } else {
+        toast.error(result.error || "Failed to reject card");
+      }
     } catch {
       toast.error("Error rejecting card");
     } finally {
@@ -593,7 +599,7 @@ export default function CardsPage() {
     }
   };
 
-  // ── Reject submitted application ─────────────────────────────────────────
+  // Reject submitted application
   const handleRejectApplication = async () => {
     if (!selectedApplication || !rejectReason.trim()) return;
     setIsSubmitting(true);
@@ -608,7 +614,9 @@ export default function CardsPage() {
         setSelectedApplication(null);
         setRejectReason("");
         await fetchData();
-      } else toast.error(result.error || "Failed to reject application");
+      } else {
+        toast.error(result.error || "Failed to reject application");
+      }
     } catch {
       toast.error("Error rejecting application");
     } finally {
@@ -621,11 +629,33 @@ export default function CardsPage() {
     else if (rejectTarget === "application") await handleRejectApplication();
   };
 
+  // ── Derived ───────────────────────────────────────────────────────────────
   const barangays = [...new Set(cards.map((c) => c.barangay))]
     .filter(Boolean)
-    .sort();
+    .sort() as string[];
   const totalPending = pendingCards.length + pendingApplications.length;
 
+  // Modal display values derived from mode
+  const cardIdModalTitle =
+    cardIdModalMode === "activate"
+      ? "Activate Pending Card"
+      : "Issue PWD ID Card";
+  const cardIdModalName =
+    cardIdModalMode === "activate"
+      ? (selectedCard?.name ?? "")
+      : selectedApplication
+        ? `${selectedApplication.first_name} ${selectedApplication.last_name}${selectedApplication.suffix ? ` ${selectedApplication.suffix}` : ""}`
+        : "";
+  const cardIdModalSubtitle =
+    cardIdModalMode === "activate"
+      ? `User #${selectedCard?.user_id ?? ""}`
+      : `App #${selectedApplication?.application_id ?? ""}`;
+  const cardIdModalInitial =
+    cardIdModalMode === "activate"
+      ? (selectedCard?.name?.charAt(0) ?? "?")
+      : (selectedApplication?.first_name?.charAt(0) ?? "?");
+
+  // ── Loading screen ────────────────────────────────────────────────────────
   if (isLoadingRole) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -637,6 +667,7 @@ export default function CardsPage() {
     );
   }
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-50/50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
@@ -789,6 +820,7 @@ export default function CardsPage() {
                   {filteredCards.length === 1 ? "record" : "records"}
                 </span>
               </div>
+
               {isLoading ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
                   <div className="w-8 h-8 rounded-full border-4 border-blue-100 border-t-blue-600 animate-spin" />
@@ -860,7 +892,10 @@ export default function CardsPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleViewCard(card)}
+                            onClick={() => {
+                              setSelectedCard(card);
+                              setIsViewCardModalOpen(true);
+                            }}
                             className="text-slate-600 hover:text-blue-600 hover:bg-blue-50 h-8 px-3 text-xs font-medium"
                           >
                             <Eye className="h-3.5 w-3.5 mr-1.5" />
@@ -914,7 +949,7 @@ export default function CardsPage() {
                       Pending Cards
                     </h2>
                     <span className="text-xs text-slate-400 ml-1">
-                      — awaiting activation
+                      — awaiting card ID assignment
                     </span>
                     <span className="ml-auto text-xs text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full font-medium">
                       {filteredPendingCards.length}
@@ -945,13 +980,13 @@ export default function CardsPage() {
                                 <StatusBadge status="Pending" />
                               </div>
                               <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                                <span className="flex items-center gap-1">
+                                <span className="flex items-center gap-1 italic text-amber-600">
                                   <CreditCard className="h-3 w-3" />
-                                  {card.card_id}
+                                  No card ID assigned yet
                                 </span>
                                 <span className="flex items-center gap-1">
                                   <Calendar className="h-3 w-3" />
-                                  {safeFormat(card.date_issued, "MMM dd, yyyy")}
+                                  {safeFormat(card.created_at, "MMM dd, yyyy")}
                                 </span>
                                 <span className="flex items-center gap-1">
                                   <MapPin className="h-3 w-3" />
@@ -967,7 +1002,10 @@ export default function CardsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleViewCard(card)}
+                              onClick={() => {
+                                setSelectedCard(card);
+                                setIsViewCardModalOpen(true);
+                              }}
                               className="h-8 px-3 text-xs text-slate-600 hover:text-blue-600 hover:bg-blue-50"
                             >
                               <Eye className="h-3.5 w-3.5 mr-1.5" />
@@ -976,15 +1014,13 @@ export default function CardsPage() {
                             <Button
                               size="sm"
                               className="h-8 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
-                              onClick={() => handleActivatePendingCard(card)}
+                              onClick={() =>
+                                handleActivatePendingCardClick(card)
+                              }
                               disabled={isSubmitting}
                             >
-                              {isSubmitting ? (
-                                <RefreshCw className="h-3.5 w-3.5 animate-spin mr-1.5" />
-                              ) : (
-                                <CheckCircle className="h-3.5 w-3.5 mr-1.5" />
-                              )}
-                              Issue Card
+                              <CheckCircle className="h-3.5 w-3.5 mr-1.5" />
+                              Activate
                             </Button>
                             <Button
                               variant="destructive"
@@ -1031,102 +1067,83 @@ export default function CardsPage() {
                     </div>
                   ) : (
                     <div className="divide-y divide-slate-100">
-                      {filteredPendingApps.map((app) => {
-                        const isNew = !app.card_id; // null = new applicant
-                        return (
-                          <div
-                            key={app._id}
-                            className="flex flex-col sm:flex-row sm:items-center justify-between px-5 py-4 hover:bg-blue-50/20 transition-colors gap-3"
-                          >
-                            <div className="flex items-start gap-3 flex-1 min-w-0">
-                              <div className="shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 flex items-center justify-center mt-0.5">
-                                <span className="text-sm font-bold text-blue-700">
-                                  {app.first_name?.charAt(0) ?? "?"}
+                      {filteredPendingApps.map((app) => (
+                        <div
+                          key={app._id}
+                          className="flex flex-col sm:flex-row sm:items-center justify-between px-5 py-4 hover:bg-blue-50/20 transition-colors gap-3"
+                        >
+                          <div className="flex items-start gap-3 flex-1 min-w-0">
+                            <div className="shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 flex items-center justify-center mt-0.5">
+                              <span className="text-sm font-bold text-blue-700">
+                                {app.first_name?.charAt(0) ?? "?"}
+                              </span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2 mb-1">
+                                <span className="font-semibold text-slate-800">
+                                  {app.first_name} {app.last_name}
+                                  {app.suffix && ` ${app.suffix}`}
+                                </span>
+                                <StatusBadge status="Pending" />
+                                {!app.card_id ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-200">
+                                    <Sparkles className="h-3 w-3" />
+                                    New Applicant
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                                    <RefreshCw className="h-3 w-3" />
+                                    Renewal
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                                <span>App #{app.application_id}</span>
+                                <span className="flex items-center gap-1">
+                                  <Calendar className="h-3 w-3" />
+                                  {safeFormat(app.created_at, "MMM dd, yyyy")}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  <MapPin className="h-3 w-3" />
+                                  {app.residence_address?.barangay ?? "N/A"}
                                 </span>
                               </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex flex-wrap items-center gap-2 mb-1">
-                                  <span className="font-semibold text-slate-800">
-                                    {app.first_name} {app.last_name}
-                                    {app.suffix && ` ${app.suffix}`}
-                                  </span>
-                                  <StatusBadge status="Pending" />
-                                  {/* New vs Existing applicant badge */}
-                                  {isNew ? (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-200">
-                                      <Sparkles className="h-3 w-3" />
-                                      New Applicant
-                                    </span>
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-                                      <RefreshCw className="h-3 w-3" />
-                                      Existing
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                                  <span>App #{app.application_id}</span>
-                                  <span className="flex items-center gap-1">
-                                    <Calendar className="h-3 w-3" />
-                                    {safeFormat(app.created_at, "MMM dd, yyyy")}
-                                  </span>
-                                  <span className="flex items-center gap-1">
-                                    <MapPin className="h-3 w-3" />
-                                    {app.residence_address?.barangay ?? "N/A"}
-                                  </span>
-                                </div>
-                                {!isNew && app.card_id && (
-                                  <p className="text-xs text-blue-500 mt-1 flex items-center gap-1">
-                                    <CreditCard className="h-3 w-3" />
-                                    Previous Card: {app.card_id}
-                                  </p>
-                                )}
-                                {app.types_of_disability?.length ? (
-                                  <p className="text-xs text-slate-400 mt-1">
-                                    {app.types_of_disability.join(", ")}
-                                  </p>
-                                ) : null}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <Button
-                                size="sm"
-                                className="h-8 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
-                                // NEW: show preview modal first; EXISTING: issue directly
-                                onClick={() =>
-                                  isNew
-                                    ? handleIssueNewApplicant(app)
-                                    : handleIssueExistingApplicant(app)
-                                }
-                                disabled={isSubmitting || isLoadingPreview}
-                              >
-                                {isSubmitting || isLoadingPreview ? (
-                                  <RefreshCw className="h-3.5 w-3.5 animate-spin mr-1.5" />
-                                ) : (
-                                  <CheckCircle className="h-3.5 w-3.5 mr-1.5" />
-                                )}
-                                Issue Card
-                              </Button>
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                className="h-8 px-3 text-xs"
-                                disabled={isSubmitting}
-                                onClick={() => {
-                                  setSelectedApplication(app);
-                                  setSelectedCard(null);
-                                  setRejectTarget("application");
-                                  setRejectReason("");
-                                  setShowRejectDialog(true);
-                                }}
-                              >
-                                <XCircle className="h-3.5 w-3.5 mr-1.5" />
-                                Reject
-                              </Button>
+                              {app.types_of_disability?.length ? (
+                                <p className="text-xs text-slate-400 mt-1">
+                                  {app.types_of_disability.join(", ")}
+                                </p>
+                              ) : null}
                             </div>
                           </div>
-                        );
-                      })}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Button
+                              size="sm"
+                              className="h-8 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                              onClick={() => handleApproveClick(app)}
+                              disabled={isSubmitting}
+                            >
+                              <CheckCircle className="h-3.5 w-3.5 mr-1.5" />
+                              Approve
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="h-8 px-3 text-xs"
+                              disabled={isSubmitting}
+                              onClick={() => {
+                                setSelectedApplication(app);
+                                setSelectedCard(null);
+                                setRejectTarget("application");
+                                setRejectReason("");
+                                setShowRejectDialog(true);
+                              }}
+                            >
+                              <XCircle className="h-3.5 w-3.5 mr-1.5" />
+                              Reject
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -1153,160 +1170,138 @@ export default function CardsPage() {
         </Tabs>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════════ */}
-      {/* Issue Card Preview Modal — NEW APPLICANTS ONLY (card_id is null)  */}
-      {/* ══════════════════════════════════════════════════════════════════ */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          CARD ID INPUT MODAL
+          mode="issue"    → Approve submitted application
+          mode="activate" → Activate pending card (card_id is null in DB)
+      ══════════════════════════════════════════════════════════════════════ */}
       <Dialog
-        open={isIssueModalOpen}
+        open={isCardIdModalOpen}
         onOpenChange={(open) => {
-          if (!open) {
-            setIsIssueModalOpen(false);
-            setIssuePreview(null);
-          }
+          if (!open) handleCardIdModalClose();
         }}
       >
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto p-0">
-          {issuePreview && (
-            <>
-              {/* Header */}
-              <div className="relative bg-gradient-to-br from-violet-600 to-violet-700 px-6 pt-6 pb-10 rounded-t-lg overflow-hidden">
-                <div className="absolute inset-0 opacity-10">
-                  <div className="absolute top-2 right-8 w-32 h-32 rounded-full border-4 border-white" />
-                  <div className="absolute -top-4 right-16 w-20 h-20 rounded-full border-4 border-white" />
-                </div>
-                <DialogHeader className="relative">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <Sparkles className="h-4 w-4 text-violet-200" />
-                        <p className="text-violet-200 text-xs font-medium uppercase tracking-widest">
-                          New Applicant
-                        </p>
-                      </div>
-                      <DialogTitle className="text-white text-xl font-bold">
-                        {issuePreview.applicant_name}
-                      </DialogTitle>
-                      <p className="text-violet-200 text-xs mt-1">
-                        App #{issuePreview.application_id}
-                      </p>
-                    </div>
-                  </div>
-                </DialogHeader>
-              </div>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CreditCard className="h-5 w-5 text-emerald-600" />
+              {cardIdModalTitle}
+            </DialogTitle>
+          </DialogHeader>
 
-              <div className="px-6 pt-4 pb-6 -mt-4 space-y-4">
-                {/* Generated Card ID — prominent display */}
-                <div className="bg-white rounded-xl border-2 border-violet-200 p-4 shadow-sm -mt-8 relative">
-                  <p className="text-xs font-semibold text-violet-600 uppercase tracking-wider mb-1">
-                    Generated Card ID
-                  </p>
-                  <div className="flex items-center gap-3">
-                    <CreditCard className="h-5 w-5 text-violet-500 shrink-0" />
-                    <span className="text-xl font-bold font-mono text-slate-900 tracking-wider">
-                      {issuePreview.generated_card_id}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-1.5">
-                    This Card ID will be permanently assigned to this applicant
-                    upon confirmation.
-                  </p>
+          <div className="space-y-5 py-1">
+            {/* Person summary */}
+            {cardIdModalName && (
+              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-100 to-emerald-200 flex items-center justify-center shrink-0">
+                  <span className="text-sm font-bold text-emerald-700">
+                    {cardIdModalInitial}
+                  </span>
                 </div>
-
-                {/* Applicant details */}
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { label: "Barangay", value: issuePreview.barangay },
-                    { label: "Sex", value: issuePreview.sex },
-                    {
-                      label: "Disability Type",
-                      value: issuePreview.type_of_disability,
-                    },
-                    {
-                      label: "Date of Birth",
-                      value: safeFormat(
-                        issuePreview.date_of_birth,
-                        "MMM dd, yyyy",
-                      ),
-                    },
-                  ].map(({ label, value }) => (
-                    <div
-                      key={label}
-                      className="bg-slate-50 rounded-lg p-3 border border-slate-100"
-                    >
-                      <p className="text-xs text-slate-500 mb-0.5">{label}</p>
-                      <p className="text-sm font-semibold text-slate-800">
-                        {value}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
-                  <p className="text-xs text-slate-500 mb-0.5">Address</p>
-                  <p className="text-sm font-semibold text-slate-800">
-                    {issuePreview.address}
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-800 text-sm truncate">
+                    {cardIdModalName}
                   </p>
-                </div>
-
-                <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
-                  <p className="text-xs text-slate-500 mb-1">
-                    Emergency Contact
-                  </p>
-                  <p className="text-sm font-semibold text-slate-800">
-                    {issuePreview.emergency_contact_name}
-                    <span className="text-slate-500 font-normal ml-2">
-                      · {issuePreview.emergency_contact_number}
-                    </span>
-                  </p>
-                </div>
-
-                <div className="flex gap-2.5 p-3.5 bg-violet-50 rounded-xl border border-violet-200">
-                  <AlertTriangle className="h-4 w-4 text-violet-500 shrink-0 mt-0.5" />
-                  <p className="text-xs text-violet-700 leading-relaxed">
-                    The Card ID above has been{" "}
-                    <strong>reserved and saved</strong> in the database as{" "}
-                    <strong>Pending</strong>. Confirming will activate the card,
-                    mark the application as Approved, set{" "}
-                    <strong>user.card_id</strong> and{" "}
-                    <strong>user.is_verified = true</strong>, and send email +
-                    SMS notifications to the applicant.
+                  <p className="text-xs text-slate-500">
+                    {cardIdModalSubtitle}
                   </p>
                 </div>
               </div>
+            )}
 
-              <DialogFooter className="px-6 pb-6 gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setIsIssueModalOpen(false);
-                    setIssuePreview(null);
-                  }}
-                  className="border-slate-200"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleConfirmIssue}
-                  disabled={isSubmitting}
-                  className="bg-violet-600 hover:bg-violet-700 text-white"
-                >
-                  {isSubmitting ? (
-                    <RefreshCw className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                  )}
-                  Confirm & Issue Card
-                </Button>
-              </DialogFooter>
-            </>
-          )}
+            {/* Format hint banner */}
+            <div className="flex items-start gap-2.5 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="text-xs font-semibold text-blue-700">
+                  Required format
+                </p>
+                <p className="text-xs text-blue-600 font-mono tracking-wide">
+                  XX-XXXX-XXX-XXXXXXX
+                </p>
+                <p className="text-xs text-blue-500">
+                  e.g. <span className="font-mono">06-4511-001-1234567</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Card ID input */}
+            <div className="space-y-2">
+              <Label
+                htmlFor="card-id-input"
+                className="text-sm font-semibold text-slate-700"
+              >
+                Card ID <span className="text-red-500">*</span>
+              </Label>
+              <Input
+                id="card-id-input"
+                ref={cardIdInputRef}
+                value={cardIdInput}
+                onChange={(e) => {
+                  setCardIdInput(e.target.value);
+                  if (cardIdError) setCardIdError("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !isSubmitting) handleCardIdSubmit();
+                }}
+                placeholder="06-4511-001-1234567"
+                className={`font-mono text-base h-11 ${
+                  cardIdError
+                    ? "border-red-400 focus-visible:ring-red-400"
+                    : "focus-visible:ring-emerald-400"
+                }`}
+                disabled={isSubmitting}
+              />
+              {cardIdError ? (
+                <p className="text-xs text-red-500 flex items-start gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>{cardIdError}</span>
+                </p>
+              ) : (
+                <p className="text-xs text-slate-400">
+                  Enter the ID exactly as printed on the physical card. Press
+                  Enter to confirm.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 pt-2">
+            <Button
+              variant="outline"
+              onClick={handleCardIdModalClose}
+              disabled={isSubmitting}
+              className="border-slate-200"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCardIdSubmit}
+              disabled={isSubmitting || !cardIdInput.trim()}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white min-w-[130px]"
+            >
+              {isSubmitting ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin mr-2" />
+                  {cardIdModalMode === "activate" ? "Activating…" : "Issuing…"}
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                  {cardIdModalMode === "activate"
+                    ? "Activate Card"
+                    : "Issue Card"}
+                </>
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ══════════════════════════════════════════════════════ */}
-      {/* View Card Modal                                        */}
-      {/* ══════════════════════════════════════════════════════ */}
-      <Dialog open={isViewModalOpen} onOpenChange={setIsViewModalOpen}>
+      {/* ══════════════════════════════════════════════════════════════════════
+          VIEW CARD MODAL
+      ══════════════════════════════════════════════════════════════════════ */}
+      <Dialog open={isViewCardModalOpen} onOpenChange={setIsViewCardModalOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-0">
           {selectedCard &&
             (() => {
@@ -1329,7 +1324,11 @@ export default function CardsPage() {
                             {selectedCard.name}
                           </DialogTitle>
                           <p className="text-blue-200 text-sm mt-1 font-mono">
-                            {selectedCard.card_id}
+                            {selectedCard.card_id || (
+                              <span className="italic opacity-70">
+                                No card ID yet
+                              </span>
+                            )}
                           </p>
                         </div>
                         <div className="mt-1">
@@ -1484,7 +1483,7 @@ export default function CardsPage() {
                     <Button
                       variant="outline"
                       onClick={() => {
-                        setIsViewModalOpen(false);
+                        setIsViewCardModalOpen(false);
                         setSelectedCard(null);
                       }}
                       className="border-slate-200"
@@ -1508,9 +1507,9 @@ export default function CardsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ══════════════════════════════════════════════════════ */}
-      {/* Unified Reject Dialog                                  */}
-      {/* ══════════════════════════════════════════════════════ */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          REJECT DIALOG
+      ══════════════════════════════════════════════════════════════════════ */}
       <AlertDialog open={showRejectDialog} onOpenChange={setShowRejectDialog}>
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
@@ -1527,16 +1526,15 @@ export default function CardsPage() {
             <AlertDialogDescription className="text-slate-600">
               {rejectTarget === "card" ? (
                 <>
-                  You are about to reject the pending card for{" "}
+                  Rejecting the pending card for{" "}
                   <strong className="text-slate-800">
                     {selectedCard?.name}
                   </strong>{" "}
-                  (Card #{selectedCard?.card_id}). The card will be marked as
-                  Revoked.
+                  (User #{selectedCard?.user_id}). It will be marked as Revoked.
                 </>
               ) : (
                 <>
-                  You are about to reject the application for{" "}
+                  Rejecting the application for{" "}
                   <strong className="text-slate-800">
                     {selectedApplication?.first_name}{" "}
                     {selectedApplication?.last_name}
@@ -1583,9 +1581,9 @@ export default function CardsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ══════════════════════════════════════════════════════ */}
-      {/* Revoke Dialog — Active cards only                      */}
-      {/* ══════════════════════════════════════════════════════ */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          REVOKE DIALOG
+      ══════════════════════════════════════════════════════════════════════ */}
       <AlertDialog
         open={showRevokeDialog}
         onOpenChange={(open) => {
@@ -1601,7 +1599,7 @@ export default function CardsPage() {
               <AlertDialogTitle>Revoke Card</AlertDialogTitle>
             </div>
             <AlertDialogDescription className="text-slate-600">
-              You are about to revoke the card for{" "}
+              Revoking the card for{" "}
               <strong className="text-slate-800">{selectedCard?.name}</strong>{" "}
               (Card #{selectedCard?.card_id}). This cannot be undone.
             </AlertDialogDescription>
