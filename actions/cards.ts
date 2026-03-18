@@ -43,7 +43,6 @@ export interface CardStatistics {
 }
 
 export interface CardIssuancePreview {
-  generated_card_id: string;
   applicant_name: string;
   application_id: string;
   user_id: string;
@@ -70,6 +69,9 @@ const STAFF_ROLES = [
   "mswd-cswdo-pdao",
 ];
 
+// Must match the regexp in your Card model exactly
+const CARD_ID_REGEX = /^\d{2}-\d{4}-\d{3}-\d{7}$/;
+
 function isStaffRole(role?: string): boolean {
   return STAFF_ROLES.includes(role?.toLowerCase() ?? "");
 }
@@ -95,6 +97,23 @@ function mapDisabilityType(type: string): string {
   return DISABILITY_TYPE_MAP[type] || "Others";
 }
 
+// ============ HELPER: Unified error parser ============
+
+function parseActionError(error: any, fallback: string): string {
+  if (error?.code === 11000) {
+    return "That Card ID is already in use. Please enter a different one.";
+  }
+  if (error?.name === "ValidationError") {
+    const first = Object.values(error.errors ?? {})[0] as any;
+    return (
+      first?.message ??
+      "Validation failed. Please check the card ID format (XX-XXXX-XXX-XXXXXXX)."
+    );
+  }
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
+
 // ============ HELPERS: Contact lookup ============
 
 async function getCardHolderEmail(userId: string): Promise<string | null> {
@@ -102,7 +121,7 @@ async function getCardHolderEmail(userId: string): Promise<string | null> {
     const user = await UserModel.findOne({ user_id: userId })
       .select("email")
       .lean();
-    return user?.email ?? null;
+    return (user as any)?.email ?? null;
   } catch (error) {
     console.error(`Error looking up user email for user_id ${userId}:`, error);
     return null;
@@ -114,14 +133,14 @@ async function getCardHolderPhone(userId: string): Promise<string | null> {
     const user = await UserModel.findOne({ user_id: userId })
       .select("contact_number")
       .lean();
-    if (user?.contact_number) return user.contact_number;
+    if ((user as any)?.contact_number) return (user as any).contact_number;
   } catch (error) {
     console.error(`Error looking up phone for user_id ${userId}:`, error);
   }
   return null;
 }
 
-// ============ HELPERS: Notifications ============
+// ============ HELPERS: Email / SMS ============
 
 async function sendCardIssuanceEmail(
   userId: string,
@@ -224,15 +243,50 @@ async function sendCardRevocationSMS(
   }
 }
 
-// ============ HELPER: Generate Card ID ============
+// ============ HELPER: Sync user document after card issuance / revocation ============
+//
+// Your User schema has two card-related fields with DIFFERENT validators:
+//
+//   pwd_issued_id → /^\d{2}-\d{4}-\d{3}-\d{7}$/ — matches the PWD card number ✅
+//   card_id       → /^CARD-\d{6}$/               — a different internal format ❌
+//
+// We ONLY update pwd_issued_id. Writing the PWD card number into card_id would
+// fail the CARD-###### validator and the updateOne would either throw or silently
+// drop the write depending on runValidators.
+//
+// runValidators: false is still used so that setting pwd_issued_id to null on
+// revocation doesn't trip the format check.
 
-async function generateCardId(): Promise<string> {
-  const regionCode = "06";
-  const municipalityCode = "4511";
-  const count = await CardModel.countDocuments();
-  const sequenceNumber = (count + 1).toString().padStart(3, "0");
-  const uniquePart = Date.now().toString().slice(-7);
-  return `${regionCode}-${municipalityCode}-${sequenceNumber}-${uniquePart}`;
+async function syncUserCardFields(
+  userId: string,
+  pwdIssuedId: string | null,
+  actorId: string,
+): Promise<void> {
+  try {
+    const result = await UserModel.updateOne(
+      { user_id: userId },
+      {
+        $set: {
+          pwd_issued_id: pwdIssuedId,
+          is_verified: pwdIssuedId !== null,
+          updated_by: actorId,
+          updated_at: new Date(),
+        },
+      },
+      { runValidators: false },
+    );
+    console.log(
+      `[syncUserCardFields] user="${userId}" pwd_issued_id="${pwdIssuedId}" matched=${result.matchedCount} modified=${result.modifiedCount}`,
+    );
+    if (result.matchedCount === 0) {
+      console.warn(
+        `[syncUserCardFields] ⚠️ No user found with user_id="${userId}"`,
+      );
+    }
+  } catch (error) {
+    // Don't throw — card was already saved successfully. Just log.
+    console.error("[syncUserCardFields] Error syncing user fields:", error);
+  }
 }
 
 // ============ GET ALL CARDS ============
@@ -244,7 +298,7 @@ export async function getCards(filters?: {
 }) {
   try {
     await connectToDatabase();
-    let query: any = {};
+    const query: any = {};
     if (filters?.status) query.status = filters.status;
     if (filters?.barangay) query.barangay = filters.barangay;
     if (filters?.userId) query.user_id = filters.userId;
@@ -309,27 +363,21 @@ export async function getCardStatistics() {
         ],
       }),
     ]);
-    const statistics: CardStatistics = {
-      total,
-      active,
-      expired,
-      revoked,
-      pending,
+    return {
+      success: true,
+      data: { total, active, expired, revoked, pending },
     };
-    return { success: true, data: statistics };
   } catch (error) {
     console.error("Error fetching card statistics:", error);
     return { success: false, error: "Failed to fetch card statistics" };
   }
 }
 
-// ============ PREVIEW CARD ISSUANCE ============
-// For NEW applicants only (application.card_id is null).
-// Step 1 of 2: Generates a card ID, saves the card to DB as status "Pending",
-// and links the card_id to the application so staff can preview before confirming.
-// The card stays Pending until approveAndIssueCard is called.
+// ============ GET CARD ISSUANCE PREVIEW ============
 
-export async function previewCardIssuance(applicationId: string) {
+export async function getCardIssuancePreview(
+  applicationId: string,
+): Promise<{ success: boolean; data?: CardIssuancePreview; error?: string }> {
   try {
     const user = await getCurrentUser();
     if (!user) return { success: false, error: "Unauthorized" };
@@ -338,7 +386,7 @@ export async function previewCardIssuance(applicationId: string) {
 
     await connectToDatabase();
 
-    let application = await Application.findOne({
+    let application: any = await Application.findOne({
       application_id: applicationId,
     });
     if (!application) {
@@ -347,75 +395,21 @@ export async function previewCardIssuance(applicationId: string) {
         application = await Application.findById(applicationId);
     }
     if (!application) return { success: false, error: "Application not found" };
-    if (application.status !== "Submitted") {
+    if (application.status !== "Submitted")
       return {
         success: false,
         error: "Only submitted applications can be previewed",
       };
-    }
-    if (application.card_id) {
-      return {
-        success: false,
-        error:
-          "This applicant already has a card assigned. Use approveAndIssueCard directly.",
-      };
-    }
 
-    // Check no active/pending card already exists for this user
-    const existingCard = await CardModel.findOne({
+    const existingActive = await CardModel.findOne({
       user_id: application.user_id,
-      status: { $in: ["Active", "Pending"] },
+      status: "Active",
     });
-    if (existingCard) {
-      // If a Pending card already exists (staff already clicked Issue Card), return its preview
-      if (existingCard.status === "Pending") {
-        const addr = application.residence_address || {};
-        const fullAddress =
-          [
-            addr.house_no_and_street,
-            addr.barangay,
-            addr.municipality,
-            addr.province,
-          ]
-            .filter(Boolean)
-            .join(", ") || "N/A";
-        const fullName = [
-          application.first_name,
-          application.middle_name && application.middle_name !== "N/A"
-            ? application.middle_name
-            : null,
-          application.last_name,
-          application.suffix || null,
-        ]
-          .filter(Boolean)
-          .join(" ");
-
-        const preview: CardIssuancePreview = {
-          generated_card_id: existingCard.card_id,
-          applicant_name: fullName,
-          application_id: application.application_id,
-          user_id: application.user_id,
-          barangay: existingCard.barangay,
-          type_of_disability: existingCard.type_of_disability,
-          date_of_birth:
-            existingCard.date_of_birth?.toISOString?.() ||
-            existingCard.date_of_birth,
-          sex: existingCard.sex,
-          address: existingCard.address,
-          emergency_contact_name: existingCard.emergency_contact_name,
-          emergency_contact_number: existingCard.emergency_contact_number,
-          is_new_applicant: true,
-        };
-        return { success: true, data: JSON.parse(JSON.stringify(preview)) };
-      }
+    if (existingActive)
       return {
         success: false,
         error: "An active card already exists for this user",
       };
-    }
-
-    // ── Generate card ID and SAVE to DB as Pending ────────────────────────
-    const cardId = await generateCardId();
 
     const addr = application.residence_address || {};
     const fullAddress =
@@ -439,79 +433,61 @@ export async function previewCardIssuance(applicationId: string) {
       .filter(Boolean)
       .join(" ");
 
-    const disabilityType = mapDisabilityType(
-      application.types_of_disability?.[0] || "Others",
-    );
-
-    // Save card to DB as Pending — card_id is now reserved
-    const pendingCard = new CardModel({
-      card_id: cardId,
-      user_id: application.user_id,
-      name: fullName,
-      barangay: application.residence_address?.barangay || "N/A",
-      type_of_disability: disabilityType,
-      address: fullAddress,
-      date_of_birth: application.date_of_birth,
-      sex: application.sex,
-      blood_type: application.blood_type || "Unknown",
-      date_issued: new Date(),
-      emergency_contact_name: application.emergency_contact_name || "N/A",
-      emergency_contact_number: application.emergency_contact_number || "N/A",
-      status: "Pending", // ← Pending until staff confirms
-      verification_count: 0,
-      created_by: user.admin_id,
-    });
-    await pendingCard.save();
-    console.log(`✅ Pending card created in DB: ${cardId}`);
-
-    // Link card_id to application so we can look it up on confirm
-    application.card_id = cardId;
-    application.updated_by = user.admin_id;
-    await application.save();
-    console.log(`✅ Application ${applicationId} card_id set to ${cardId}`);
-
     const preview: CardIssuancePreview = {
-      generated_card_id: cardId,
       applicant_name: fullName,
       application_id: application.application_id,
       user_id: application.user_id,
       barangay: application.residence_address?.barangay || "N/A",
-      type_of_disability: disabilityType,
+      type_of_disability: mapDisabilityType(
+        application.types_of_disability?.[0] || "Others",
+      ),
       date_of_birth:
         application.date_of_birth?.toISOString?.() || application.date_of_birth,
       sex: application.sex,
       address: fullAddress,
       emergency_contact_name: application.emergency_contact_name || "N/A",
       emergency_contact_number: application.emergency_contact_number || "N/A",
-      is_new_applicant: true,
+      is_new_applicant: !application.card_id,
     };
-
-    revalidatePath("/dashboard/cards");
-    revalidatePath("/dashboard/applications");
 
     return { success: true, data: JSON.parse(JSON.stringify(preview)) };
   } catch (error) {
-    console.error("Error previewing card issuance:", error);
-    return { success: false, error: "Failed to generate card preview" };
+    console.error("Error getting card issuance preview:", error);
+    return { success: false, error: "Failed to load applicant preview" };
   }
 }
 
-// ============ APPROVE AND ISSUE CARD ============
-// Step 2 of 2 for NEW applicants: finds the Pending card created by
-// previewCardIssuance and activates it (status → Active).
-// For EXISTING applicants: creates a fresh Active card directly.
-// In both cases sets user.is_verified = true AND user.card_id = cardId.
+// ============ ISSUE CARD (from submitted application) ============
 
-export async function approveAndIssueCard(applicationId: string) {
+export async function issueCard(applicationId: string, cardId: string) {
   try {
     const user = await getCurrentUser();
     if (!user) return { success: false, error: "Unauthorized" };
     if (!isStaffRole(user.role))
       return { success: false, error: "Unauthorized: Staff access required" };
 
+    const trimmedCardId = cardId.trim();
+    if (!trimmedCardId) return { success: false, error: "Card ID is required" };
+
+    // Pre-validate format before hitting the DB
+    if (!CARD_ID_REGEX.test(trimmedCardId)) {
+      return {
+        success: false,
+        error:
+          "Card ID must follow the format: XX-XXXX-XXX-XXXXXXX (e.g. 06-4511-001-1234567)",
+      };
+    }
+
     await connectToDatabase();
 
-    let application = await Application.findOne({
+    const existingCard = await CardModel.findOne({ card_id: trimmedCardId });
+    if (existingCard)
+      return {
+        success: false,
+        error: `Card ID "${trimmedCardId}" is already in use`,
+      };
+
+    let application: any = await Application.findOne({
       application_id: applicationId,
     });
     if (!application) {
@@ -520,144 +496,85 @@ export async function approveAndIssueCard(applicationId: string) {
         application = await Application.findById(applicationId);
     }
     if (!application) return { success: false, error: "Application not found" };
-    if (application.status !== "Submitted") {
+    if (application.status !== "Submitted")
       return {
         success: false,
-        error: "Only submitted applications can be approved for card issuance",
+        error: "Only submitted applications can be approved",
       };
-    }
 
-    let cardId: string;
-    let activeCard: any;
+    const existingActiveCard = await CardModel.findOne({
+      user_id: application.user_id,
+      status: { $in: ["Active", "Pending"] },
+    });
+    if (existingActiveCard)
+      return {
+        success: false,
+        error: "An active or pending card already exists for this user",
+      };
 
-    // ── NEW applicant: card was already saved as Pending by previewCardIssuance ──
-    if (application.card_id) {
-      const pendingCard = await CardModel.findOne({
-        card_id: application.card_id,
-        status: "Pending",
-      });
-
-      if (!pendingCard) {
-        return {
-          success: false,
-          error:
-            "Pending card not found. Please click Issue Card again to regenerate.",
-        };
-      }
-
-      // Activate the Pending card
-      await CardModel.updateOne(
-        { card_id: application.card_id },
-        {
-          $set: {
-            status: "Active",
-            updated_by: user.admin_id,
-            updated_at: new Date(),
-          },
-        },
-      );
-      cardId = application.card_id;
-      activeCard = await CardModel.findOne({ card_id: cardId }).lean();
-      console.log(`✅ Pending card activated: ${cardId}`);
-    } else {
-      // ── EXISTING applicant (renewal): create a fresh Active card ──────────
-      const existingActiveCard = await CardModel.findOne({
-        user_id: application.user_id,
-        status: { $in: ["Active", "Pending"] },
-      });
-      if (existingActiveCard) {
-        return {
-          success: false,
-          error: "An active or pending card already exists for this user",
-        };
-      }
-
-      cardId = await generateCardId();
-
-      const addr = application.residence_address || {};
-      const fullAddress =
-        [
-          addr.house_no_and_street,
-          addr.barangay,
-          addr.municipality,
-          addr.province,
-        ]
-          .filter(Boolean)
-          .join(", ") || "N/A";
-
-      const fullName = [
-        application.first_name,
-        application.middle_name && application.middle_name !== "N/A"
-          ? application.middle_name
-          : null,
-        application.last_name,
-        application.suffix || null,
+    const addr = application.residence_address || {};
+    const fullAddress =
+      [
+        addr.house_no_and_street,
+        addr.barangay,
+        addr.municipality,
+        addr.province,
       ]
         .filter(Boolean)
-        .join(" ");
+        .join(", ") || "N/A";
 
-      const newCard = new CardModel({
-        card_id: cardId,
-        user_id: application.user_id,
-        name: fullName,
-        barangay: application.residence_address?.barangay || "N/A",
-        type_of_disability: mapDisabilityType(
-          application.types_of_disability?.[0] || "Others",
-        ),
-        address: fullAddress,
-        date_of_birth: application.date_of_birth,
-        sex: application.sex,
-        blood_type: application.blood_type || "Unknown",
-        date_issued: new Date(),
-        emergency_contact_name: application.emergency_contact_name || "N/A",
-        emergency_contact_number: application.emergency_contact_number || "N/A",
-        status: "Active",
-        verification_count: 0,
-        created_by: user.admin_id,
-      });
-      await newCard.save();
-      activeCard = newCard;
-      console.log(`✅ New card created for existing applicant: ${cardId}`);
-    }
+    const fullName = [
+      application.first_name,
+      application.middle_name && application.middle_name !== "N/A"
+        ? application.middle_name
+        : null,
+      application.last_name,
+      application.suffix || null,
+    ]
+      .filter(Boolean)
+      .join(" ");
 
-    const fullName = activeCard.name;
+    const newCard = new CardModel({
+      card_id: trimmedCardId,
+      user_id: application.user_id,
+      name: fullName,
+      barangay: application.residence_address?.barangay || "N/A",
+      type_of_disability: mapDisabilityType(
+        application.types_of_disability?.[0] || "Others",
+      ),
+      address: fullAddress,
+      date_of_birth: application.date_of_birth,
+      sex: application.sex,
+      blood_type: application.blood_type || "Unknown",
+      date_issued: new Date(),
+      emergency_contact_name: application.emergency_contact_name || "N/A",
+      emergency_contact_number: application.emergency_contact_number || "N/A",
+      status: "Active",
+      verification_count: 0,
+      created_by: user.admin_id,
+    });
+    await newCard.save();
+    console.log(`[issueCard] ✅ Card created: ${trimmedCardId}`);
 
     application.status = "Approved";
-    application.card_id = cardId;
+    application.card_id = trimmedCardId;
     application.reviewed_at = new Date();
     application.reviewed_by = user.admin_id;
     application.updated_by = user.admin_id;
     await application.save();
-    console.log(`✅ Application ${applicationId} updated to Approved`);
+    console.log(`[issueCard] ✅ Application ${applicationId} → Approved`);
 
-    // Set user.is_verified = true AND user.card_id = cardId
-    const userUpdateResult = await UserModel.updateOne(
-      { user_id: application.user_id },
-      {
-        $set: {
-          is_verified: true,
-          card_id: cardId,
-          updated_by: user.admin_id,
-          updated_at: new Date(),
-        },
-      },
-    );
-    if (userUpdateResult.modifiedCount > 0) {
-      console.log(
-        `✅ User ${application.user_id} — is_verified: true, card_id: ${cardId}`,
-      );
-    } else {
-      console.warn(`⚠️ User ${application.user_id} not updated`);
-    }
+    // Syncs pwd_issued_id (not card_id — see comment on syncUserCardFields)
+    await syncUserCardFields(application.user_id, trimmedCardId, user.admin_id);
 
     const emailSent = await sendCardIssuanceEmail(
       application.user_id,
-      activeCard,
+      newCard,
       fullName,
     );
     const smsSent = await sendCardIssuanceSMS(
       application.user_id,
-      activeCard,
+      newCard,
       fullName,
     );
 
@@ -665,15 +582,15 @@ export async function approveAndIssueCard(applicationId: string) {
       user_id: application.user_id,
       type: "application_approved",
       title: "PWD ID Card Issued! 🎉",
-      message: `Dear ${fullName}, your PWD ID Card has been issued. Card ID: ${cardId}. You may claim your ID at the PDAO office.`,
+      message: `Dear ${fullName}, your PWD ID Card has been issued. Card ID: ${trimmedCardId}. You may claim your ID at the PDAO office.`,
       priority: "high",
       application_id: application.application_id,
-      action_url: `/dashboard/cards/${cardId}`,
+      action_url: `/dashboard/cards/${trimmedCardId}`,
       action_text: "View Card",
       target_roles: ["User"],
       metadata: {
         entityType: "card",
-        card_id: cardId,
+        card_id: trimmedCardId,
         application_id: application.application_id,
         applicant_name: fullName,
         status: "Issued",
@@ -688,15 +605,15 @@ export async function approveAndIssueCard(applicationId: string) {
       user_id: user.admin_id || "system",
       type: "application_approved",
       title: "Card Issued",
-      message: `Card issued for ${fullName} (Card ID: ${cardId}). Email: ${emailSent ? "✅" : "❌"} SMS: ${smsSent ? "✅" : "❌"}`,
+      message: `Card issued for ${fullName} (Card ID: ${trimmedCardId}). Email: ${emailSent ? "✅" : "❌"} SMS: ${smsSent ? "✅" : "❌"}`,
       priority: "normal",
       application_id: application.application_id,
-      action_url: `/dashboard/cards/${cardId}`,
+      action_url: `/dashboard/cards/${trimmedCardId}`,
       action_text: "View Card",
       target_roles: ["Staff", "Admin"],
       metadata: {
         entityType: "card",
-        card_id: cardId,
+        card_id: trimmedCardId,
         application_id: application.application_id,
         applicant_name: fullName,
         issued_by: user.admin_id,
@@ -714,22 +631,147 @@ export async function approveAndIssueCard(applicationId: string) {
     return {
       success: true,
       message: `Card issued successfully. Email: ${emailSent ? "✅" : "❌"} SMS: ${smsSent ? "✅" : "❌"}`,
-      data: { card_id: cardId, email_sent: emailSent, sms_sent: smsSent },
+      data: {
+        card_id: trimmedCardId,
+        email_sent: emailSent,
+        sms_sent: smsSent,
+      },
     };
-  } catch (error) {
-    console.error("Error approving and issuing card:", error);
+  } catch (error: any) {
+    console.error("Error issuing card:", error);
     return {
       success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Failed to approve and issue card",
+      error: parseActionError(error, "Failed to issue card"),
+    };
+  }
+}
+
+// ============ ACTIVATE PENDING CARD (assign card_id + set Active) ============
+
+export async function activatePendingCard(mongoId: string, cardId: string) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return { success: false, error: "Unauthorized" };
+    if (!isStaffRole(user.role))
+      return { success: false, error: "Unauthorized: Staff access required" };
+
+    const trimmedCardId = cardId.trim();
+    if (!trimmedCardId) return { success: false, error: "Card ID is required" };
+
+    // Pre-validate format before hitting the DB
+    if (!CARD_ID_REGEX.test(trimmedCardId)) {
+      return {
+        success: false,
+        error:
+          "Card ID must follow the format: XX-XXXX-XXX-XXXXXXX (e.g. 06-4511-001-1234567)",
+      };
+    }
+
+    await connectToDatabase();
+
+    const duplicate = await CardModel.findOne({ card_id: trimmedCardId });
+    if (duplicate)
+      return {
+        success: false,
+        error: `Card ID "${trimmedCardId}" is already in use`,
+      };
+
+    const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(mongoId);
+    if (!isValidObjectId)
+      return { success: false, error: "Invalid card reference" };
+
+    const card = await CardModel.findById(mongoId);
+    if (!card) return { success: false, error: "Pending card not found" };
+    if (card.status !== "Pending")
+      return { success: false, error: "Card is not in Pending status" };
+
+    card.card_id = trimmedCardId;
+    card.status = "Active";
+    card.type_of_disability = mapDisabilityType(card.type_of_disability);
+    card.date_issued = new Date();
+    card.updated_by = user.admin_id;
+    await card.save();
+    console.log(`[activatePendingCard] ✅ Activated card: ${trimmedCardId}`);
+
+    // Syncs pwd_issued_id (not card_id — see comment on syncUserCardFields)
+    await syncUserCardFields(card.user_id, trimmedCardId, user.admin_id);
+
+    const cardHolderName = card.name || "Card Holder";
+
+    const emailSent = await sendCardIssuanceEmail(
+      card.user_id,
+      card,
+      cardHolderName,
+    );
+    const smsSent = await sendCardIssuanceSMS(
+      card.user_id,
+      card,
+      cardHolderName,
+    );
+
+    await createNotificationWithMetadata({
+      user_id: card.user_id,
+      type: "application_approved",
+      title: "PWD ID Card Activated! 🎉",
+      message: `Dear ${cardHolderName}, your PWD ID Card has been activated. Card ID: ${trimmedCardId}. You may claim your ID at the PDAO office.`,
+      priority: "high",
+      action_url: `/dashboard/cards/${trimmedCardId}`,
+      action_text: "View Card",
+      target_roles: ["User"],
+      metadata: {
+        entityType: "card",
+        card_id: trimmedCardId,
+        card_holder_name: cardHolderName,
+        status: "Active",
+        activated_at: new Date().toISOString(),
+        activated_by: user.admin_id,
+        email_sent: emailSent,
+        sms_sent: smsSent,
+      },
+    });
+
+    await createNotificationWithMetadata({
+      user_id: user.admin_id || "system",
+      type: "application_approved",
+      title: "Pending Card Activated",
+      message: `Card activated for ${cardHolderName} (Card ID: ${trimmedCardId}). Email: ${emailSent ? "✅" : "❌"} SMS: ${smsSent ? "✅" : "❌"}`,
+      priority: "normal",
+      action_url: `/dashboard/cards/${trimmedCardId}`,
+      action_text: "View Card",
+      target_roles: ["Staff", "Admin"],
+      metadata: {
+        entityType: "card",
+        card_id: trimmedCardId,
+        card_holder_name: cardHolderName,
+        activated_by: user.admin_id,
+        activated_at: new Date().toISOString(),
+        email_sent: emailSent,
+        sms_sent: smsSent,
+      },
+    });
+
+    revalidatePath("/dashboard/cards");
+    revalidatePath("/dashboard/users");
+
+    return {
+      success: true,
+      message: `Card activated successfully. Email: ${emailSent ? "✅" : "❌"} SMS: ${smsSent ? "✅" : "❌"}`,
+      data: {
+        card_id: trimmedCardId,
+        email_sent: emailSent,
+        sms_sent: smsSent,
+      },
+    };
+  } catch (error: any) {
+    console.error("Error activating pending card:", error);
+    return {
+      success: false,
+      error: parseActionError(error, "Failed to activate pending card"),
     };
   }
 }
 
 // ============ UPDATE CARD ============
-// Activating a Pending card (status → Active) also syncs user.card_id.
 
 export async function updateCard(
   cardId: string,
@@ -755,7 +797,7 @@ export async function updateCard(
 
     await connectToDatabase();
 
-    let card = await CardModel.findOne({ card_id: cardId });
+    let card: any = await CardModel.findOne({ card_id: cardId });
     if (!card) {
       const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(cardId);
       if (isValidObjectId) card = await CardModel.findById(cardId);
@@ -782,24 +824,6 @@ export async function updateCard(
     if (result.matchedCount === 0)
       return { success: false, error: "Card not found" };
 
-    // If activating a Pending card, sync user.card_id
-    if (updateData.status === "Active") {
-      await UserModel.updateOne(
-        { user_id: card.user_id },
-        {
-          $set: {
-            is_verified: true,
-            card_id: cardId,
-            updated_by: user.admin_id,
-            updated_at: new Date(),
-          },
-        },
-      );
-      console.log(
-        `✅ User ${card.user_id} — is_verified: true, card_id: ${cardId}`,
-      );
-    }
-
     const updatedCard = await CardModel.findById(card._id).lean();
     revalidatePath("/dashboard/cards");
     revalidatePath(`/dashboard/cards/${cardId}`);
@@ -810,17 +834,16 @@ export async function updateCard(
       data: JSON.parse(JSON.stringify(updatedCard)),
       message: "Card updated successfully",
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error updating card:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to update card",
+      error: parseActionError(error, "Failed to update card"),
     };
   }
 }
 
 // ============ REVOKE CARD ============
-// Clears user.card_id when revoked so the user can reapply.
 
 export async function revokeCard(cardId: string, reason: string) {
   try {
@@ -833,7 +856,7 @@ export async function revokeCard(cardId: string, reason: string) {
 
     await connectToDatabase();
 
-    let card = await CardModel.findOne({ card_id: cardId });
+    let card: any = await CardModel.findOne({ card_id: cardId });
     if (!card) {
       const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(cardId);
       if (isValidObjectId) card = await CardModel.findById(cardId);
@@ -851,18 +874,8 @@ export async function revokeCard(cardId: string, reason: string) {
 
     const cardHolderName = card.name || "Card Holder";
 
-    // Clear user.card_id so they can reapply
-    await UserModel.updateOne(
-      { user_id: card.user_id },
-      {
-        $set: {
-          card_id: null,
-          updated_by: user.admin_id,
-          updated_at: new Date(),
-        },
-      },
-    );
-    console.log(`✅ User ${card.user_id} card_id cleared after revocation`);
+    // Clear pwd_issued_id and mark user unverified
+    await syncUserCardFields(card.user_id, null, user.admin_id);
 
     const emailSent = await sendCardRevocationEmail(
       card.user_id,
@@ -903,7 +916,7 @@ export async function revokeCard(cardId: string, reason: string) {
       user_id: user.admin_id || "system",
       type: "custom_message",
       title: "Card Revoked",
-      message: `Card for ${cardHolderName} (${card.card_id}) revoked by ${user.full_name || user.admin_id}. Reason: ${reason}. Email: ${emailSent ? "✅" : "❌"} SMS: ${smsSent ? "✅" : "❌"}`,
+      message: `Card for ${cardHolderName} (${card.card_id}) revoked. Reason: ${reason}. Email: ${emailSent ? "✅" : "❌"} SMS: ${smsSent ? "✅" : "❌"}`,
       priority: "normal",
       action_url: `/dashboard/cards/${card.card_id}`,
       action_text: "View Card",
@@ -929,16 +942,16 @@ export async function revokeCard(cardId: string, reason: string) {
       message: `Card revoked. Email: ${emailSent ? "✅" : "❌"} SMS: ${smsSent ? "✅" : "❌"}`,
       data: { email_sent: emailSent, sms_sent: smsSent },
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error revoking card:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to revoke card",
+      error: parseActionError(error, "Failed to revoke card"),
     };
   }
 }
 
-// ============ REJECT APPLICATION (from Cards page) ============
+// ============ REJECT APPLICATION ============
 
 export async function rejectApplication(applicationId: string, reason: string) {
   try {
@@ -951,7 +964,7 @@ export async function rejectApplication(applicationId: string, reason: string) {
 
     await connectToDatabase();
 
-    let application = await Application.findOne({
+    let application: any = await Application.findOne({
       application_id: applicationId,
     });
     if (!application) {
@@ -960,12 +973,11 @@ export async function rejectApplication(applicationId: string, reason: string) {
         application = await Application.findById(applicationId);
     }
     if (!application) return { success: false, error: "Application not found" };
-    if (application.status !== "Submitted") {
+    if (application.status !== "Submitted")
       return {
         success: false,
         error: "Only submitted applications can be rejected",
       };
-    }
 
     application.status = "Rejected";
     application.rejection_reason = reason.trim();
@@ -1068,12 +1080,11 @@ export async function rejectApplication(applicationId: string, reason: string) {
       message: `Application rejected. Email: ${emailSent ? "✅" : "❌"} SMS: ${smsSent ? "✅" : "❌"}`,
       data: { email_sent: emailSent, sms_sent: smsSent },
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error rejecting application:", error);
     return {
       success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to reject application",
+      error: parseActionError(error, "Failed to reject application"),
     };
   }
 }
@@ -1083,7 +1094,7 @@ export async function rejectApplication(applicationId: string, reason: string) {
 export async function verifyCard(cardId: string) {
   try {
     await connectToDatabase();
-    let card = await CardModel.findOne({ card_id: cardId });
+    let card: any = await CardModel.findOne({ card_id: cardId });
     if (!card) {
       const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(cardId);
       if (isValidObjectId) card = await CardModel.findById(cardId);
@@ -1135,9 +1146,8 @@ export async function sendExpiryReminders(daysUntilExpiry: number = 30) {
   try {
     const user = await getCurrentUser();
     if (!user) return { success: false, error: "Unauthorized" };
-    if (!["admin", "supervisor"].includes(user.role?.toLowerCase() ?? "")) {
+    if (!["admin", "supervisor"].includes(user.role?.toLowerCase() ?? ""))
       return { success: false, error: "Unauthorized: Admin access required" };
-    }
 
     await connectToDatabase();
     const upperBound = new Date();
@@ -1154,17 +1164,18 @@ export async function sendExpiryReminders(daysUntilExpiry: number = 30) {
     const failedReminders: string[] = [];
 
     for (const card of expiringCards) {
-      const name = card.name || "Card Holder";
+      const c = card as any;
+      const name = c.name || "Card Holder";
       let emailSent = false;
       let smsSent = false;
 
-      const email = await getCardHolderEmail(card.user_id);
+      const email = await getCardHolderEmail(c.user_id);
       if (email) {
         try {
           await sendEmail({
             to: email,
             subject: "PWD ID Card Expiring Soon",
-            html: `<p>Dear <strong>${name}</strong>, your PWD ID Card (${card.card_id}) is expiring soon. Please visit the PDAO office to renew. - PDAO Office</p>`,
+            html: `<p>Dear <strong>${name}</strong>, your PWD ID Card (${c.card_id}) is expiring soon. Please visit the PDAO office to renew.</p>`,
           });
           emailSent = true;
         } catch {
@@ -1172,12 +1183,12 @@ export async function sendExpiryReminders(daysUntilExpiry: number = 30) {
         }
       }
 
-      const phone = await getCardHolderPhone(card.user_id);
+      const phone = await getCardHolderPhone(c.user_id);
       if (phone) {
         try {
           const r = await smsService.sendSMS(
             phone,
-            `Dear ${name}, your PWD ID Card (${card.card_id}) is expiring soon. Visit PDAO to renew. - PDAO`,
+            `Dear ${name}, your PWD ID Card (${c.card_id}) is expiring soon. Visit PDAO to renew. - PDAO`,
           );
           smsSent = r.success;
         } catch {
@@ -1185,21 +1196,21 @@ export async function sendExpiryReminders(daysUntilExpiry: number = 30) {
         }
       }
 
-      if (emailSent || smsSent) remindersSent.push(card.card_id);
-      else failedReminders.push(card.card_id);
+      if (emailSent || smsSent) remindersSent.push(c.card_id);
+      else failedReminders.push(c.card_id);
 
       await createNotificationWithMetadata({
-        user_id: card.user_id,
+        user_id: c.user_id,
         type: "reminder",
         title: "PWD ID Card Expiring Soon",
-        message: `Dear ${name}, your PWD ID Card (${card.card_id}) is expiring soon. Visit the PDAO office to renew.`,
+        message: `Dear ${name}, your PWD ID Card (${c.card_id}) is expiring soon. Visit the PDAO office to renew.`,
         priority: "high",
-        action_url: `/dashboard/cards/${card.card_id}`,
+        action_url: `/dashboard/cards/${c.card_id}`,
         action_text: "View Card",
         target_roles: ["User"],
         metadata: {
           entityType: "card",
-          card_id: card.card_id,
+          card_id: c.card_id,
           card_holder_name: name,
           reminder_date: new Date().toISOString(),
           days_until_expiry: daysUntilExpiry,
@@ -1230,9 +1241,8 @@ export async function bulkExpireCards() {
   try {
     const user = await getCurrentUser();
     if (!user) return { success: false, error: "Unauthorized" };
-    if (!["admin", "supervisor"].includes(user.role?.toLowerCase() ?? "")) {
+    if (!["admin", "supervisor"].includes(user.role?.toLowerCase() ?? ""))
       return { success: false, error: "Unauthorized: Admin access required" };
-    }
 
     await connectToDatabase();
     const fiveYearsAgo = new Date();
