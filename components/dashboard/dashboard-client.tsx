@@ -21,8 +21,6 @@ import {
   RefreshCw,
   Download,
   Loader2,
-  CheckCircle2,
-  AlertCircle,
 } from "lucide-react";
 import {
   BarChart,
@@ -44,6 +42,8 @@ import {
 import { useState, useEffect } from "react";
 import { getDashboardStats } from "@/actions/dashboard";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import * as XLSX from "xlsx";
 
 interface DashboardClientProps {
   user: TokenPayload;
@@ -76,11 +76,86 @@ interface DashboardStats {
   }>;
 }
 
+// Helper function to get status badge
+const getStatusBadge = (status: string) => {
+  switch (status) {
+    case "success":
+      return (
+        <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+          Verified
+        </Badge>
+      );
+    case "info":
+      return (
+        <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">
+          Pending
+        </Badge>
+      );
+    case "warning":
+      return (
+        <Badge className="bg-yellow-100 text-yellow-700 hover:bg-yellow-100">
+          Updated
+        </Badge>
+      );
+    default:
+      return <Badge variant="outline">{status}</Badge>;
+  }
+};
+
+// Custom tooltip component
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-white p-3 border rounded-lg shadow-lg">
+        <p className="font-medium">{label}</p>
+        {payload.map((entry: any, index: number) => (
+          <p key={index} style={{ color: entry.color }}>
+            {entry.name}: {entry.value}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
+// Custom label formatter for pie charts
+const renderCustomizedLabel = ({
+  cx,
+  cy,
+  midAngle,
+  innerRadius,
+  outerRadius,
+  percent,
+  name,
+}: any) => {
+  const RADIAN = Math.PI / 180;
+  const radius = outerRadius + 25;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+
+  if (percent < 0.03) return null;
+
+  return (
+    <text
+      x={x}
+      y={y}
+      fill="#666"
+      textAnchor={x > cx ? "start" : "end"}
+      dominantBaseline="central"
+      className="text-xs font-medium"
+    >
+      {`${name} ${(percent * 100).toFixed(0)}%`}
+    </text>
+  );
+};
+
 export default function DashboardClient({ user }: DashboardClientProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const fetchStats = async () => {
     try {
@@ -105,79 +180,215 @@ export default function DashboardClient({ user }: DashboardClientProps) {
     fetchStats();
   }, []);
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "success":
-        return (
-          <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
-            Verified
-          </Badge>
-        );
-      case "info":
-        return (
-          <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">
-            Pending
-          </Badge>
-        );
-      case "warning":
-        return (
-          <Badge className="bg-yellow-100 text-yellow-700 hover:bg-yellow-100">
-            Updated
-          </Badge>
-        );
-      default:
-        return <Badge variant="outline">{status}</Badge>;
-    }
+  const handleRefresh = () => {
+    fetchStats();
+    router.refresh();
   };
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-white p-3 border rounded-lg shadow-lg">
-          <p className="font-medium">{label}</p>
-          {payload.map((entry: any, index: number) => (
-            <p key={index} style={{ color: entry.color }}>
-              {entry.name}: {entry.value}
-            </p>
-          ))}
-        </div>
+  const handleExport = async () => {
+    if (!stats) return;
+
+    try {
+      setExporting(true);
+      toast.info("Preparing export file...");
+
+      // Create workbook
+      const workbook = XLSX.utils.book_new();
+
+      // 1. Overview Sheet
+      const overviewData = [
+        ["Dashboard Report", `Generated: ${new Date().toLocaleString()}`],
+        [],
+        ["OVERVIEW STATISTICS"],
+        ["Metric", "Value"],
+        ["Total PWD Users", stats.overview.totalUsers],
+        ["Verified Users", stats.overview.verifiedUsers],
+        ["Pending Verification", stats.overview.pendingUsers],
+        ["Active Users", stats.overview.activeUsers],
+        ["Male", stats.overview.maleCount],
+        ["Female", stats.overview.femaleCount],
+        ["Other", stats.overview.otherCount],
+      ];
+      const overviewSheet = XLSX.utils.aoa_to_sheet(overviewData);
+      XLSX.utils.book_append_sheet(workbook, overviewSheet, "Overview");
+
+      // 2. Age Distribution Sheet
+      const ageData = [
+        ["Age Distribution"],
+        ["Age Group", "Number of Users", "Percentage"],
+        ...stats.ageDistribution.map((item) => [
+          item.ageGroup,
+          item.count,
+          `${((item.count / stats.overview.totalUsers) * 100).toFixed(2)}%`,
+        ]),
+      ];
+      const ageSheet = XLSX.utils.aoa_to_sheet(ageData);
+      XLSX.utils.book_append_sheet(workbook, ageSheet, "Age Distribution");
+
+      // 3. Gender Distribution Sheet
+      const genderData = [
+        ["Gender Distribution"],
+        ["Gender", "Count", "Percentage"],
+        ...stats.genderData.map((item) => [
+          item.name,
+          item.value,
+          `${((item.value / stats.overview.totalUsers) * 100).toFixed(2)}%`,
+        ]),
+      ];
+      const genderSheet = XLSX.utils.aoa_to_sheet(genderData);
+      XLSX.utils.book_append_sheet(
+        workbook,
+        genderSheet,
+        "Gender Distribution",
       );
+
+      // 4. Monthly Trends Sheet
+      const monthlyData = [
+        ["Monthly Trends"],
+        ["Month", "Registrations", "Verifications"],
+        ...stats.monthlyData.map((item) => [
+          item.month,
+          item.registrations,
+          item.verifications,
+        ]),
+      ];
+      const monthlySheet = XLSX.utils.aoa_to_sheet(monthlyData);
+      XLSX.utils.book_append_sheet(workbook, monthlySheet, "Monthly Trends");
+
+      // 5. PWD ID Status Sheet
+      const pwdData = [
+        ["PWD ID Status"],
+        ["Status", "Count", "Percentage"],
+        ...stats.disabilityData.map((item) => [
+          item.name,
+          item.value,
+          `${((item.value / stats.overview.totalUsers) * 100).toFixed(2)}%`,
+        ]),
+      ];
+      const pwdSheet = XLSX.utils.aoa_to_sheet(pwdData);
+      XLSX.utils.book_append_sheet(workbook, pwdSheet, "PWD ID Status");
+
+      // 6. Recent Activities Sheet
+      const activitiesData = [
+        ["Recent Activities"],
+        ["User", "Action", "Status", "Time"],
+        ...stats.recentActivities.map((item) => [
+          item.user,
+          item.action,
+          item.status === "success"
+            ? "Verified"
+            : item.status === "info"
+              ? "Pending"
+              : item.status === "warning"
+                ? "Updated"
+                : item.status,
+          item.time,
+        ]),
+      ];
+      const activitiesSheet = XLSX.utils.aoa_to_sheet(activitiesData);
+      XLSX.utils.book_append_sheet(
+        workbook,
+        activitiesSheet,
+        "Recent Activities",
+      );
+
+      // 7. Summary Sheet with key insights
+      const highestMonth = stats.monthlyData.reduce(
+        (max, item) => (item.registrations > max.registrations ? item : max),
+        stats.monthlyData[0],
+      );
+
+      const mostCommonAgeGroup = stats.ageDistribution.reduce(
+        (max, item) => (item.count > max.count ? item : max),
+        stats.ageDistribution[0],
+      );
+
+      const summaryData = [
+        ["KEY INSIGHTS"],
+        [],
+        ["Metric", "Value", "Insight"],
+        [
+          "Total Users",
+          stats.overview.totalUsers,
+          "Total registered PWD users in the system",
+        ],
+        [
+          "Verification Rate",
+          `${((stats.overview.verifiedUsers / stats.overview.totalUsers) * 100).toFixed(2)}%`,
+          `${stats.overview.verifiedUsers} out of ${stats.overview.totalUsers} users are verified`,
+        ],
+        [
+          "Gender Ratio",
+          `${((stats.overview.maleCount / stats.overview.totalUsers) * 100).toFixed(2)}% Male / ${((stats.overview.femaleCount / stats.overview.totalUsers) * 100).toFixed(2)}% Female`,
+          "Gender distribution across all users",
+        ],
+        [
+          "Most Common Age Group",
+          mostCommonAgeGroup.ageGroup,
+          `${mostCommonAgeGroup.count} users (${((mostCommonAgeGroup.count / stats.overview.totalUsers) * 100).toFixed(2)}%)`,
+        ],
+        [
+          "Highest Registration Month",
+          highestMonth.month,
+          `${highestMonth.registrations} new registrations`,
+        ],
+        [
+          "Active Users Rate",
+          `${((stats.overview.activeUsers / stats.overview.totalUsers) * 100).toFixed(2)}%`,
+          `${stats.overview.activeUsers} users are currently active`,
+        ],
+      ];
+      const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+      XLSX.utils.book_append_sheet(workbook, summarySheet, "Summary");
+
+      // Auto-size columns function
+      const autoSizeColumns = (sheet: XLSX.WorkSheet) => {
+        const range = XLSX.utils.decode_range(sheet["!ref"] || "A1");
+        const colWidths: { [key: string]: number } = {};
+
+        for (let R = range.s.r; R <= range.e.r; ++R) {
+          for (let C = range.s.c; C <= range.e.c; ++C) {
+            const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+            const cell = sheet[cellAddress];
+            if (cell && cell.v) {
+              const cellValue = cell.v.toString();
+              const cellLength = cellValue.length;
+              const colLetter = XLSX.utils.encode_col(C);
+              if (!colWidths[colLetter] || cellLength > colWidths[colLetter]) {
+                colWidths[colLetter] = Math.min(Math.max(cellLength, 10), 50);
+              }
+            }
+          }
+        }
+
+        sheet["!cols"] = Object.keys(colWidths).map((col) => ({
+          wch: colWidths[col],
+        }));
+      };
+
+      // Auto-size columns for all sheets
+      workbook.SheetNames.forEach((sheetName) => {
+        const sheet = workbook.Sheets[sheetName];
+        autoSizeColumns(sheet);
+      });
+
+      // Generate filename with current date
+      const fileName = `dashboard_report_${new Date().toISOString().split("T")[0]}.xlsx`;
+
+      // Write and download file
+      XLSX.writeFile(workbook, fileName);
+
+      toast.success("Export completed successfully!", {
+        description: `File saved as ${fileName}`,
+      });
+    } catch (error) {
+      console.error("Export error:", error);
+      toast.error("Export failed", {
+        description: "An error occurred while generating the export file.",
+      });
+    } finally {
+      setExporting(false);
     }
-    return null;
-  };
-
-  // Custom label formatter for pie charts - moved outside to prevent overlap
-  const renderCustomizedLabel = ({
-    cx,
-    cy,
-    midAngle,
-    innerRadius,
-    outerRadius,
-    percent,
-    index,
-    name,
-  }: any) => {
-    const RADIAN = Math.PI / 180;
-    // Increase radius for label placement to move labels outside the pie
-    const radius = outerRadius + 25;
-    const x = cx + radius * Math.cos(-midAngle * RADIAN);
-    const y = cy + radius * Math.sin(-midAngle * RADIAN);
-
-    // Only show label if percent is significant enough
-    if (percent < 0.03) return null;
-
-    return (
-      <text
-        x={x}
-        y={y}
-        fill="#666"
-        textAnchor={x > cx ? "start" : "end"}
-        dominantBaseline="central"
-        className="text-xs font-medium"
-      >
-        {`${name} ${(percent * 100).toFixed(0)}%`}
-      </text>
-    );
   };
 
   if (loading) {
@@ -222,20 +433,29 @@ export default function DashboardClient({ user }: DashboardClientProps) {
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-            Welcome back, {user.full_name.split(" ")[0]}!
+            Welcome back, {user.full_name?.split(" ")[0] || "Admin"}!
           </h1>
           <p className="text-gray-600 dark:text-gray-400 mt-1">
             Here's what's happening with your PWD registry today.
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => router.refresh()}>
+          <Button variant="outline" size="sm" onClick={handleRefresh}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
-          <Button variant="outline" size="sm">
-            <Download className="mr-2 h-4 w-4" />
-            Export
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExport}
+            disabled={exporting}
+          >
+            {exporting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-2 h-4 w-4" />
+            )}
+            {exporting ? "Exporting..." : "Export"}
           </Button>
         </div>
       </div>
@@ -269,10 +489,12 @@ export default function DashboardClient({ user }: DashboardClientProps) {
               {stats.overview.verifiedUsers}
             </div>
             <div className="flex items-center text-xs text-green-600 mt-1">
-              {Math.round(
-                (stats.overview.verifiedUsers / stats.overview.totalUsers) *
-                  100,
-              )}
+              {stats.overview.totalUsers > 0
+                ? Math.round(
+                    (stats.overview.verifiedUsers / stats.overview.totalUsers) *
+                      100,
+                  )
+                : 0}
               % of total
             </div>
           </CardContent>
@@ -668,7 +890,8 @@ export default function DashboardClient({ user }: DashboardClientProps) {
                       {activity.user
                         .split(" ")
                         .map((n) => n[0])
-                        .join("")}
+                        .join("")
+                        .toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
                   <div>
@@ -696,20 +919,22 @@ export default function DashboardClient({ user }: DashboardClientProps) {
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div>
               <p className="text-sm text-gray-500">Admin ID</p>
-              <p className="font-medium">{user.admin_id}</p>
+              <p className="font-medium">
+                {(user as any).admin_id || (user as any).user_id || "N/A"}
+              </p>
             </div>
             <div>
               <p className="text-sm text-gray-500">Full Name</p>
-              <p className="font-medium">{user.full_name}</p>
+              <p className="font-medium">{user.full_name || "N/A"}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500">Email</p>
-              <p className="font-medium">{user.email}</p>
+              <p className="font-medium">{user.email || "N/A"}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500">Role</p>
               <Badge variant="outline" className="mt-1">
-                {user.role}
+                {user.role || "Admin"}
               </Badge>
             </div>
           </div>

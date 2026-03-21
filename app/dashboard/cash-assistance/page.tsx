@@ -46,6 +46,13 @@ import {
   ThumbsUp,
   ThumbsDown,
   Users,
+  FileText,
+  User,
+  Calendar as CalendarIcon,
+  MessageSquare,
+  Link as LinkIcon,
+  Download,
+  Phone,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
@@ -69,6 +76,7 @@ interface ApplicantData {
   last_name?: string;
   suffix?: string;
   email?: string;
+  contact_number?: string; // Added contact_number field
   avatar_url?: string | null;
   full_name: string;
 }
@@ -152,6 +160,12 @@ export default function CashAssistancePage() {
   const [adminNotes, setAdminNotes] = useState("");
   const [isActionDialogOpen, setIsActionDialogOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // New state for details modal
+  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+  const [detailsRequest, setDetailsRequest] = useState<CashAssistance | null>(
+    null,
+  );
 
   const router = useRouter();
   const userRole = getUserRole();
@@ -244,8 +258,10 @@ export default function CashAssistancePage() {
     }
   }, [searchTerm, statusFilter, requests]);
 
+  // Updated handleViewDetails to open modal instead of redirect
   const handleViewDetails = (request: CashAssistance) => {
-    router.push(`/dashboard/cash-assistance/${request.form_id}`);
+    setDetailsRequest(request);
+    setIsDetailsModalOpen(true);
   };
 
   const handleAction = (
@@ -272,6 +288,12 @@ export default function CashAssistancePage() {
 
       if (result.success) {
         setIsActionDialogOpen(false);
+
+        // Close details modal if it's open and the request being acted upon is the one in details
+        if (detailsRequest?.form_id === selectedRequest.form_id) {
+          setIsDetailsModalOpen(false);
+          setDetailsRequest(null);
+        }
 
         const applicantEmail = selectedRequest.applicant_email;
 
@@ -332,7 +354,7 @@ export default function CashAssistancePage() {
     } finally {
       setIsProcessing(false);
     }
-  }, [selectedRequest, actionType, adminNotes]);
+  }, [selectedRequest, actionType, adminNotes, detailsRequest]);
 
   const handleDialogClose = useCallback(() => {
     if (!isProcessing) {
@@ -398,6 +420,10 @@ export default function CashAssistancePage() {
 
   const getApplicantEmail = (request: CashAssistance): string | null => {
     return request.applicant_email || request.applicant?.email || null;
+  };
+
+  const getApplicantPhone = (request: CashAssistance): string | null => {
+    return request.applicant?.contact_number || null;
   };
 
   return (
@@ -650,6 +676,267 @@ export default function CashAssistancePage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Details Modal */}
+      <Dialog open={isDetailsModalOpen} onOpenChange={setIsDetailsModalOpen}>
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+          {detailsRequest && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center justify-between">
+                  <span>Request Details</span>
+                  <Badge className={getStatusBadgeClass(detailsRequest.status)}>
+                    {detailsRequest.status}
+                  </Badge>
+                </DialogTitle>
+                <DialogDescription>
+                  Complete information about the cash assistance request
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-6 py-4">
+                {/* Request Information Section */}
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <FileText className="h-5 w-5" />
+                    Request Information
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Form ID
+                      </p>
+                      <p className="text-sm font-mono">
+                        {detailsRequest.form_id}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">
+                        User ID
+                      </p>
+                      <p className="text-sm font-mono">
+                        {detailsRequest.user_id}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Date Needed
+                      </p>
+                      <p className="text-sm flex items-center gap-1">
+                        <CalendarIcon className="h-3 w-3" />
+                        {formatDate(detailsRequest.date_needed, "PPPP")}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Submitted On
+                      </p>
+                      <p className="text-sm flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {formatDate(
+                          detailsRequest.created_at,
+                          "PPPP 'at' h:mm a",
+                        )}
+                      </p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Last Updated
+                      </p>
+                      <p className="text-sm">
+                        {formatDate(
+                          detailsRequest.updated_at,
+                          "PPPP 'at' h:mm a",
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Applicant Information Section */}
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <User className="h-5 w-5" />
+                    Applicant Information
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Full Name
+                      </p>
+                      <p className="text-sm font-medium">
+                        {getApplicantName(detailsRequest)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Email Address
+                      </p>
+                      <p className="text-sm flex items-center gap-1">
+                        <Mail className="h-3 w-3" />
+                        {getApplicantEmail(detailsRequest) ||
+                          "No email provided"}
+                      </p>
+                    </div>
+                    {getApplicantPhone(detailsRequest) && (
+                      <div className="col-span-2">
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Contact Number
+                        </p>
+                        <p className="text-sm flex items-center gap-1">
+                          <Phone className="h-3 w-3" />
+                          {getApplicantPhone(detailsRequest)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Purpose Section */}
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <MessageSquare className="h-5 w-5" />
+                    Purpose / Reason
+                  </h3>
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <p className="text-sm whitespace-pre-wrap">
+                      {detailsRequest.purpose}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Medical Certificate Section */}
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <FileText className="h-5 w-5" />
+                    Medical Certificate
+                  </h3>
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <a
+                      href={detailsRequest.medical_certificate_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 hover:underline"
+                    >
+                      <Download className="h-4 w-4" />
+                      View Medical Certificate
+                    </a>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Click the link above to view or download the medical
+                      certificate
+                    </p>
+                  </div>
+                </div>
+
+                {/* Status Timeline */}
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold">Status Timeline</h3>
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="mt-1">
+                        {getStatusIcon(detailsRequest.status)}
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium">
+                          Current Status: {detailsRequest.status}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          Last updated:{" "}
+                          {formatDate(
+                            detailsRequest.updated_at,
+                            "PPP 'at' h:mm a",
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    {detailsRequest.status === "Submitted" && (
+                      <div className="ml-6 pl-4 border-l-2 border-gray-200">
+                        <p className="text-sm text-muted-foreground">
+                          This request is pending review. A staff member will
+                          review it shortly.
+                        </p>
+                      </div>
+                    )}
+                    {detailsRequest.status === "Under Review" && (
+                      <div className="ml-6 pl-4 border-l-2 border-yellow-200">
+                        <p className="text-sm text-muted-foreground">
+                          This request is currently being reviewed by the PDAO
+                          staff.
+                        </p>
+                      </div>
+                    )}
+                    {detailsRequest.status === "Approved" && (
+                      <div className="ml-6 pl-4 border-l-2 border-green-200">
+                        <p className="text-sm text-green-700">
+                          ✓ This request has been approved. The applicant has
+                          been notified via email and SMS.
+                        </p>
+                      </div>
+                    )}
+                    {detailsRequest.status === "Rejected" && (
+                      <div className="ml-6 pl-4 border-l-2 border-red-200">
+                        <p className="text-sm text-red-700">
+                          ✗ This request has been rejected. The applicant has
+                          been notified.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <DialogFooter className="flex gap-2 sm:justify-between">
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsDetailsModalOpen(false)}
+                  >
+                    Close
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      window.open(
+                        detailsRequest.medical_certificate_url,
+                        "_blank",
+                      );
+                    }}
+                  >
+                    <LinkIcon className="h-4 w-4 mr-2" />
+                    Open Medical Certificate
+                  </Button>
+                </div>
+                {canTakeAction(detailsRequest.status) && (
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="text-green-600 border-green-200 hover:bg-green-50"
+                      onClick={() => {
+                        setIsDetailsModalOpen(false);
+                        handleAction(detailsRequest, "approve");
+                      }}
+                    >
+                      <ThumbsUp className="h-4 w-4 mr-2" />
+                      Approve Request
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="text-red-600 border-red-200 hover:bg-red-50"
+                      onClick={() => {
+                        setIsDetailsModalOpen(false);
+                        handleAction(detailsRequest, "reject");
+                      }}
+                    >
+                      <ThumbsDown className="h-4 w-4 mr-2" />
+                      Reject Request
+                    </Button>
+                  </div>
+                )}
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Action Dialog */}
       <Dialog open={isActionDialogOpen} onOpenChange={handleDialogClose}>
