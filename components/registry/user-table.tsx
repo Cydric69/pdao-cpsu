@@ -35,17 +35,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  MoreHorizontal,
-  Search,
-  Eye,
-  CheckCircle,
-  XCircle,
-} from "lucide-react";
+import { MoreHorizontal, Search, CheckCircle, XCircle } from "lucide-react";
 import { format } from "date-fns";
 import { updateUserStatus } from "@/actions/registry";
 import { toast } from "sonner";
-import { useRouter } from "next/navigation";
 import { UserPublic } from "@/models/User";
 
 interface UserTableProps {
@@ -66,7 +59,6 @@ export function UserTable({
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [loading, setLoading] = useState<string | null>(null);
-  const router = useRouter();
 
   const filteredUsers = users.filter((user) => {
     const matchesSearch =
@@ -108,7 +100,6 @@ export function UserTable({
         });
         onUserUpdate();
       } else {
-        // Fix: Check if error property exists before accessing it
         const errorMessage =
           "error" in result
             ? result.error
@@ -125,10 +116,6 @@ export function UserTable({
     } finally {
       setLoading(null);
     }
-  };
-
-  const handleViewDetails = (userId: string) => {
-    router.push(`/dashboard/registry/${userId}`);
   };
 
   return (
@@ -241,16 +228,6 @@ export function UserTable({
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuItem
-                            onClick={() => handleViewDetails(user.user_id)}
-                          >
-                            <Eye className="mr-2 h-4 w-4" />
-                            View Details
-                          </DropdownMenuItem>
-
-                          <DropdownMenuSeparator />
-
                           <DropdownMenuLabel>Change Status</DropdownMenuLabel>
                           <DropdownMenuItem
                             onClick={() =>
