@@ -1,8 +1,14 @@
-// components/assistance/AddItemModal.tsx
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Upload, Loader2 } from "lucide-react";
+import { useState, useRef } from "react";
+import {
+  Upload,
+  Loader2,
+  Mail,
+  MessageSquare,
+  CheckCircle2,
+  XCircle,
+} from "lucide-react";
 import Image from "next/image";
 import { createItem, updateItem } from "@/actions/item";
 import { Item } from "@/types/item";
@@ -22,11 +28,17 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 
 interface AddItemModalProps {
   onClose: () => void;
   onItemAdded: (item: Item) => void;
   itemToEdit?: Item | null;
+}
+
+interface NotifStatus {
+  emailSent: boolean;
+  smsSent: boolean;
 }
 
 export default function AddItemModal({
@@ -36,13 +48,13 @@ export default function AddItemModal({
 }: AddItemModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notifStatus, setNotifStatus] = useState<NotifStatus | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(
     itemToEdit?.item_image_url || null,
   );
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Form state to persist values across tab switches
   const [formValues, setFormValues] = useState({
     item_name: itemToEdit?.item_name || "",
     item_description: itemToEdit?.item_description || "",
@@ -94,60 +106,41 @@ export default function AddItemModal({
     { value: "sachet", label: "Sachet" },
   ];
 
-  const handleImageClick = () => {
-    fileInputRef.current?.click();
-  };
+  const handleImageClick = () => fileInputRef.current?.click();
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setSelectedFile(file);
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
+      reader.onloadend = () => setImagePreview(reader.result as string);
       reader.readAsDataURL(file);
     }
   };
 
-  // Handler for input and textarea elements
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
-    const { name, value, type } = e.target;
-
-    setFormValues((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    const { name, value } = e.target;
+    setFormValues((prev) => ({ ...prev, [name]: value }));
   };
 
-  // Handler for checkbox inputs
   const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, checked } = e.target;
-
-    setFormValues((prev) => ({
-      ...prev,
-      [name]: checked,
-    }));
+    setFormValues((prev) => ({ ...prev, [name]: checked }));
   };
 
-  // Handler for select elements
   const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const { name, value } = e.target;
-
-    setFormValues((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormValues((prev) => ({ ...prev, [name]: value }));
   };
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setNotifStatus(null);
 
     const formData = new FormData();
 
-    // Append all form values to FormData
     Object.entries(formValues).forEach(([key, value]) => {
       if (typeof value === "boolean") {
         formData.append(key, value.toString());
@@ -156,22 +149,14 @@ export default function AddItemModal({
       }
     });
 
-    // Add user ID to form data
     if (!itemToEdit && user) {
       formData.append("created_by", user.admin_id);
     } else if (itemToEdit && user) {
       formData.append("updated_by", user.admin_id);
     }
 
-    // If a new file is selected, append it to formData
     if (selectedFile) {
       formData.set("item_image", selectedFile);
-    }
-
-    // Log form data for debugging
-    console.log("Submitting form data:");
-    for (const [key, value] of formData.entries()) {
-      console.log(`${key}:`, value);
     }
 
     setLoading(true);
@@ -187,8 +172,17 @@ export default function AddItemModal({
       }
 
       if (result.success && result.data) {
-        onItemAdded(result.data);
-        onClose();
+        // Show notif status before closing
+        setNotifStatus({
+          emailSent: result.emailSent ?? false,
+          smsSent: result.smsSent ?? false,
+        });
+
+        // Brief delay so user can see the notification status
+        setTimeout(() => {
+          onItemAdded(result.data);
+          onClose();
+        }, 2000);
       } else {
         setError(
           result.error || `Failed to ${itemToEdit ? "update" : "create"} item`,
@@ -317,7 +311,7 @@ export default function AddItemModal({
                     value={formValues.category}
                     onChange={handleSelectChange}
                     required
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {categories.map((category) => (
                       <option key={category} value={category}>
@@ -337,7 +331,7 @@ export default function AddItemModal({
                     value={formValues.unit}
                     onChange={handleSelectChange}
                     required
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {units.map((unit) => (
                       <option key={unit.value} value={unit.value}>
@@ -419,112 +413,95 @@ export default function AddItemModal({
                 <CardContent className="pt-4">
                   <h3 className="mb-3 text-sm font-medium">Item Properties</h3>
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="is_medical"
-                        name="is_medical"
-                        checked={formValues.is_medical}
-                        onChange={handleCheckboxChange}
-                        className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
-                      />
-                      <Label
-                        htmlFor="is_medical"
-                        className="text-sm font-normal cursor-pointer"
-                      >
-                        Medical Item
-                      </Label>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="requires_prescription"
-                        name="requires_prescription"
-                        checked={formValues.requires_prescription}
-                        onChange={handleCheckboxChange}
-                        className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
-                      />
-                      <Label
-                        htmlFor="requires_prescription"
-                        className="text-sm font-normal cursor-pointer"
-                      >
-                        Requires Prescription
-                      </Label>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="requires_med_cert"
-                        name="requires_med_cert"
-                        checked={formValues.requires_med_cert}
-                        onChange={handleCheckboxChange}
-                        className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
-                      />
-                      <Label
-                        htmlFor="requires_med_cert"
-                        className="text-sm font-normal cursor-pointer"
-                      >
-                        Requires Medical Certificate
-                      </Label>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="requires_brgy_cert"
-                        name="requires_brgy_cert"
-                        checked={formValues.requires_brgy_cert}
-                        onChange={handleCheckboxChange}
-                        className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
-                      />
-                      <Label
-                        htmlFor="requires_brgy_cert"
-                        className="text-sm font-normal cursor-pointer"
-                      >
-                        Requires Barangay Certificate
-                      </Label>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="is_consumable"
-                        name="is_consumable"
-                        checked={formValues.is_consumable}
-                        onChange={handleCheckboxChange}
-                        className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
-                      />
-                      <Label
-                        htmlFor="is_consumable"
-                        className="text-sm font-normal cursor-pointer"
-                      >
-                        Consumable
-                      </Label>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="needs_fitting"
-                        name="needs_fitting"
-                        checked={formValues.needs_fitting}
-                        onChange={handleCheckboxChange}
-                        className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
-                      />
-                      <Label
-                        htmlFor="needs_fitting"
-                        className="text-sm font-normal cursor-pointer"
-                      >
-                        Needs Fitting
-                      </Label>
-                    </div>
+                    {[
+                      { id: "is_medical", label: "Medical Item" },
+                      {
+                        id: "requires_prescription",
+                        label: "Requires Prescription",
+                      },
+                      {
+                        id: "requires_med_cert",
+                        label: "Requires Medical Certificate",
+                      },
+                      {
+                        id: "requires_brgy_cert",
+                        label: "Requires Barangay Certificate",
+                      },
+                      { id: "is_consumable", label: "Consumable" },
+                      { id: "needs_fitting", label: "Needs Fitting" },
+                    ].map(({ id, label }) => (
+                      <div key={id} className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          id={id}
+                          name={id}
+                          checked={
+                            formValues[id as keyof typeof formValues] as boolean
+                          }
+                          onChange={handleCheckboxChange}
+                          className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                        />
+                        <Label
+                          htmlFor={id}
+                          className="text-sm font-normal cursor-pointer"
+                        >
+                          {label}
+                        </Label>
+                      </div>
+                    ))}
                   </div>
                 </CardContent>
               </Card>
             </TabsContent>
           </Tabs>
+
+          {/* Notification Status Banner */}
+          {notifStatus && (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-3 space-y-2">
+              <p className="text-sm font-medium text-green-800">
+                ✅ Item {itemToEdit ? "updated" : "created"} successfully!
+                Notifications sent:
+              </p>
+              <div className="flex gap-3">
+                <div className="flex items-center gap-1.5">
+                  <Mail className="h-4 w-4 text-gray-500" />
+                  {notifStatus.emailSent ? (
+                    <Badge
+                      variant="outline"
+                      className="border-green-500 text-green-700 text-xs gap-1"
+                    >
+                      <CheckCircle2 className="h-3 w-3" /> Email Sent
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="border-red-400 text-red-600 text-xs gap-1"
+                    >
+                      <XCircle className="h-3 w-3" /> Email Failed
+                    </Badge>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <MessageSquare className="h-4 w-4 text-gray-500" />
+                  {notifStatus.smsSent ? (
+                    <Badge
+                      variant="outline"
+                      className="border-green-500 text-green-700 text-xs gap-1"
+                    >
+                      <CheckCircle2 className="h-3 w-3" /> SMS Sent
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="border-red-400 text-red-600 text-xs gap-1"
+                    >
+                      <XCircle className="h-3 w-3" /> SMS Failed
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Error Message */}
           {error && (
@@ -537,25 +514,33 @@ export default function AddItemModal({
           {user && (
             <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600 border border-gray-200">
               <p>
-                Created/Updated by: {user.full_name} ({user.role})
+                {itemToEdit ? "Updated" : "Created"} by: {user.full_name} (
+                {user.role})
               </p>
             </div>
           )}
 
           {/* Footer */}
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={loading}
+            >
               Cancel
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading || !!notifStatus}>
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {loading
                 ? itemToEdit
                   ? "Updating..."
                   : "Adding..."
-                : itemToEdit
-                  ? "Update Item"
-                  : "Add Item"}
+                : notifStatus
+                  ? "Done!"
+                  : itemToEdit
+                    ? "Update Item"
+                    : "Add Item"}
             </Button>
           </DialogFooter>
         </form>
