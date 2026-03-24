@@ -1,3 +1,4 @@
+// components/ApplicationDetailsModal.tsx
 "use client";
 
 import { useState } from "react";
@@ -113,7 +114,6 @@ export function ApplicationDetailsModal({
   };
 
   const canApproveReject = () => {
-    // Only check for Submitted status (removed Under Review)
     return (
       application.status === "Submitted" &&
       (userRole === "admin" || userRole === "approver")
@@ -539,6 +539,24 @@ export function ApplicationDetailsModal({
 
             <TabsContent value="documents" className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
+                {/* Birth Certificate */}
+                <div>
+                  <h4 className="font-medium mb-2">birth certificate</h4>
+                  {application.birth_certificate_url ? (
+                    <Link
+                      href={application.birth_certificate_url}
+                      target="_blank"
+                      className="text-blue-600 hover:underline flex items-center gap-2"
+                    >
+                      <FileText className="h-4 w-4" />
+                      view birth certificate
+                    </Link>
+                  ) : (
+                    <p className="text-muted-foreground">not uploaded</p>
+                  )}
+                </div>
+
+                {/* Medical Certificate */}
                 <div>
                   <h4 className="font-medium mb-2">medical certificate</h4>
                   {application.medical_certificate_url ? (
@@ -548,13 +566,14 @@ export function ApplicationDetailsModal({
                       className="text-blue-600 hover:underline flex items-center gap-2"
                     >
                       <FileText className="h-4 w-4" />
-                      view document
+                      view medical certificate
                     </Link>
                   ) : (
                     <p className="text-muted-foreground">not uploaded</p>
                   )}
                 </div>
 
+                {/* 1x1 Photo */}
                 <div>
                   <h4 className="font-medium mb-2">1x1 photo</h4>
                   {application.photo_1x1_url ? (
@@ -572,6 +591,7 @@ export function ApplicationDetailsModal({
                 </div>
               </div>
 
+              {/* Supporting Documents */}
               <div>
                 <h4 className="font-medium mb-2">supporting documents</h4>
                 {application.supporting_docs_urls?.length > 0 ? (
@@ -585,7 +605,7 @@ export function ApplicationDetailsModal({
                           className="text-blue-600 hover:underline flex items-center gap-2"
                         >
                           <FileText className="h-4 w-4" />
-                          document {index + 1}
+                          supporting document {index + 1}
                         </Link>
                       ),
                     )}
