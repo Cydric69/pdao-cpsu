@@ -6,7 +6,7 @@ import { AdminCreateSchema, AdminCreateInput } from "@/types/admin";
 // Re-export the type correctly for isolatedModules
 export type { AdminCreateInput } from "@/types/admin";
 
-// Zod schema (unchanged)
+// Zod schema
 export const AdminSchemaZod = AdminCreateSchema.extend({
   admin_id: z.string().regex(/^ADMN-[0-9]{4}$/),
 })
@@ -28,7 +28,7 @@ export interface IAdmin extends Document {
   password: string;
   address: string;
   phone_number: string;
-  role: "MSWD-CSWDO-PDAO";
+  role: "MSWD-CSWDO-PDAO" | "Superadmin";
   comparePassword(candidatePassword: string): Promise<boolean>;
   toSafeObject(): Omit<this, "password"> & { password?: never };
   createdAt: Date;
@@ -49,7 +49,7 @@ const AdminSchema = new Schema<IAdmin>(
       required: true,
       unique: true,
       index: true,
-      default: () => generateAdminId(), // Add default function here
+      default: () => generateAdminId(),
     },
     first_name: {
       type: String,
@@ -95,7 +95,7 @@ const AdminSchema = new Schema<IAdmin>(
     },
     role: {
       type: String,
-      enum: ["MSWD-CSWDO-PDAO"],
+      enum: ["MSWD-CSWDO-PDAO", "Superadmin"],
       default: "MSWD-CSWDO-PDAO",
     },
   },
@@ -104,20 +104,26 @@ const AdminSchema = new Schema<IAdmin>(
   },
 );
 
-// Pre-save: Hash password + ensure unique admin_id
-AdminSchema.pre("save", async function () {
+// Pre-validate: Ensure admin_id exists before validation
+AdminSchema.pre("validate", function (next) {
+  if (!this.admin_id) {
+    this.admin_id = generateAdminId();
+  }
+  next();
+});
+
+// Single pre-save hook: unique admin_id check + capitalize names + hash password
+AdminSchema.pre("save", async function (next) {
   const admin = this as IAdmin & { isModified: (path: string) => boolean };
 
-  // Ensure admin_id is unique (re-generate if needed)
+  // ── 1. Ensure unique admin_id ──────────────────────────────────────────────
   if (admin.admin_id) {
-    // Check if this admin_id already exists for another document
     const existing = await mongoose.models.Admin?.findOne({
       admin_id: admin.admin_id,
       _id: { $ne: admin._id },
     }).lean();
 
     if (existing) {
-      // If admin_id exists for another document, generate a new one
       let isUnique = false;
       let attempts = 0;
       const maxAttempts = 10;
@@ -136,35 +142,16 @@ AdminSchema.pre("save", async function () {
       }
 
       if (!isUnique) {
-        throw new Error(
-          "Failed to generate unique admin ID after multiple attempts",
+        return next(
+          new Error(
+            "Failed to generate unique admin ID after multiple attempts",
+          ),
         );
       }
     }
   }
 
-  // Hash password if modified
-  if (!admin.isModified("password")) return;
-
-  try {
-    const salt = await bcrypt.genSalt(10);
-    admin.password = await bcrypt.hash(admin.password, salt);
-  } catch (err) {
-    throw err;
-  }
-});
-
-// Pre-validate: Ensure admin_id exists before validation
-AdminSchema.pre("validate", function (next) {
-  if (!this.admin_id) {
-    this.admin_id = generateAdminId();
-  }
-});
-
-// Pre-save: Capitalize names & address
-AdminSchema.pre("save", function () {
-  const admin = this as IAdmin;
-
+  // ── 2. Capitalize names & address ─────────────────────────────────────────
   if (admin.first_name) {
     admin.first_name =
       admin.first_name.charAt(0).toUpperCase() +
@@ -188,6 +175,19 @@ AdminSchema.pre("save", function () {
       .split(" ")
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
       .join(" ");
+  }
+
+  // ── 3. Hash password if modified ──────────────────────────────────────────
+  if (!admin.isModified("password")) {
+    return next();
+  }
+
+  try {
+    const salt = await bcrypt.genSalt(10);
+    admin.password = await bcrypt.hash(admin.password, salt);
+    next();
+  } catch (err: any) {
+    next(err);
   }
 });
 
