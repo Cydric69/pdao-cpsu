@@ -52,17 +52,13 @@ import {
   XCircle,
   Clock,
   AlertTriangle,
-  User,
-  Calendar,
-  Droplets,
   Activity,
-  Phone,
-  FileText,
   ShieldCheck,
   ShieldOff,
   TrendingUp,
   Sparkles,
   Info,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -88,6 +84,8 @@ interface CardItem {
   verification_count: number;
   last_verified_at?: string;
   admin_notes?: string;
+  face_image_url?: string | null;
+  signature_image_url?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -140,7 +138,7 @@ function getExpiryDate(card: CardItem): Date | null {
   if (card.date_issued) {
     const d = new Date(card.date_issued);
     if (!isNaN(d.getTime())) {
-      d.setFullYear(d.getFullYear() + 5);
+      d.setFullYear(d.getFullYear() + 3);
       return d;
     }
   }
@@ -158,24 +156,744 @@ function calculateAge(dob: any): number | null {
   return age;
 }
 
-function mapDisabilityType(type: string): string {
-  const map: Record<string, string> = {
-    "Deaf or Hard of Hearing": "Hearing Impairment",
-    Deaf: "Hearing Impairment",
-    "Hard of Hearing": "Hearing Impairment",
-    "Hearing Impairment": "Hearing Impairment",
-    "Physical Disability": "Physical Disability",
-    "Visual Impairment": "Visual Impairment",
-    "Speech Impairment": "Speech Impairment",
-    "Intellectual Disability": "Intellectual Disability",
-    "Learning Disability": "Learning Disability",
-    "Mental Disability": "Mental Disability",
-    "Multiple Disabilities": "Multiple Disabilities",
-    ADHD: "Intellectual Disability",
-    Autism: "Intellectual Disability",
-    Others: "Others",
+// ─── Philippine Flag SVG ──────────────────────────────────────────────────────
+
+function PhilippineFlag() {
+  return (
+    <svg
+      viewBox="0 0 90 60"
+      style={{ width: "100%", height: "100%" }}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <rect width="90" height="30" fill="#0038A8" />
+      <rect y="30" width="90" height="30" fill="#CE1126" />
+      <polygon points="0,0 45,30 0,60" fill="#FFFFFF" />
+      <circle cx="15" cy="30" r="7" fill="#FCD116" />
+      {Array.from({ length: 8 }).map((_, i) => {
+        const angle = (i * 45 * Math.PI) / 180;
+        const x1 = 15 + 8 * Math.cos(angle);
+        const y1 = 30 + 8 * Math.sin(angle);
+        const x2 = 15 + 12 * Math.cos(angle);
+        const y2 = 30 + 12 * Math.sin(angle);
+        return (
+          <line
+            key={i}
+            x1={x1}
+            y1={y1}
+            x2={x2}
+            y2={y2}
+            stroke="#FCD116"
+            strokeWidth="1.2"
+          />
+        );
+      })}
+      <polygon
+        points="6,12 6.8,14.5 9.5,14.5 7.3,16 8.1,18.5 6,17 3.9,18.5 4.7,16 2.5,14.5 5.2,14.5"
+        fill="#FCD116"
+        transform="scale(0.5) translate(3,3)"
+      />
+      <polygon
+        points="21,6 21.5,7.7 23.2,7.7 21.8,8.7 22.3,10.4 21,9.4 19.7,10.4 20.2,8.7 18.8,7.7 20.5,7.7"
+        fill="#FCD116"
+        transform="scale(0.6) translate(-9,2)"
+      />
+      <polygon
+        points="21,54 21.5,55.7 23.2,55.7 21.8,56.7 22.3,58.4 21,57.4 19.7,58.4 20.2,56.7 18.8,55.7 20.5,55.7"
+        fill="#FCD116"
+        transform="scale(0.6) translate(-9,-33)"
+      />
+    </svg>
+  );
+}
+
+// ─── Card Front ───────────────────────────────────────────────────────────────
+
+function CardFront({ card }: { card: CardItem }) {
+  const expiryDate = getExpiryDate(card);
+  const isExpired = expiryDate ? new Date() > expiryDate : false;
+  const effectiveStatus = isExpired ? "Expired" : card.status;
+
+  const statusStyle: Record<string, { color: string }> = {
+    Active: { color: "#15803d" },
+    Expired: { color: "#dc2626" },
+    Revoked: { color: "#dc2626" },
+    Pending: { color: "#d97706" },
   };
-  return map[type] || "Others";
+  const sc = statusStyle[effectiveStatus] ?? statusStyle["Expired"];
+
+  return (
+    <div
+      style={{
+        width: "100%",
+        aspectRatio: "1.585 / 1",
+        position: "relative",
+        background:
+          "linear-gradient(135deg, #fdfbe4 0%, #f7f3c8 50%, #fdfbe4 100%)",
+        border: "1.5px solid #d4c87a",
+        borderRadius: 14,
+        overflow: "hidden",
+        fontFamily: "'Georgia', serif",
+        userSelect: "none",
+      }}
+    >
+      {/* Diagonal texture */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          opacity: 0.08,
+          pointerEvents: "none",
+          backgroundImage:
+            "repeating-linear-gradient(45deg, #c8b400 0px, #c8b400 1px, transparent 1px, transparent 8px)",
+        }}
+      />
+
+      {/* Content */}
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          padding: "3% 3% 2%",
+          boxSizing: "border-box",
+        }}
+      >
+        {/* ── Header row: flag | text | photo ── */}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: "2%" }}>
+          {/* Philippine flag */}
+          <div style={{ flexShrink: 0, width: "9%", marginTop: 2 }}>
+            <div
+              style={{
+                borderRadius: 2,
+                overflow: "hidden",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                aspectRatio: "3/2",
+              }}
+            >
+              <PhilippineFlag />
+            </div>
+          </div>
+
+          {/* Center text */}
+          <div style={{ flex: 1, textAlign: "center", lineHeight: 1.35 }}>
+            <div
+              style={{ fontSize: "clamp(5px,1.05vw,10px)", color: "#374151" }}
+            >
+              Republic of The Philippines
+            </div>
+            <div
+              style={{ fontSize: "clamp(5px,1.05vw,10px)", color: "#374151" }}
+            >
+              Region VI - Western Visayas
+            </div>
+            <div
+              style={{
+                fontSize: "clamp(5.5px,1.1vw,11px)",
+                fontWeight: 800,
+                color: "#1f2937",
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+              }}
+            >
+              Province of Negros Occidental
+            </div>
+            <div
+              style={{ fontSize: "clamp(5px,1.05vw,10px)", color: "#374151" }}
+            >
+              Municipality of Hinigaran
+            </div>
+            <div
+              style={{
+                fontSize: "clamp(6px,1.25vw,12px)",
+                fontWeight: 900,
+                color: "#111827",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                marginTop: 2,
+              }}
+            >
+              Person with Disabilities Affairs Office (PDAO)
+            </div>
+            {/* Status badge inline */}
+            <div
+              style={{
+                display: "inline-block",
+                marginTop: 3,
+                padding: "1px 8px",
+                borderRadius: 10,
+                border: `1px solid ${sc.color}44`,
+                background: `${sc.color}12`,
+                fontSize: "clamp(5px,0.9vw,8.5px)",
+                fontWeight: 800,
+                color: sc.color,
+                letterSpacing: "0.07em",
+                textTransform: "uppercase",
+              }}
+            >
+              {effectiveStatus}
+            </div>
+          </div>
+
+          {/* 1x1 Photo */}
+          <div
+            style={{
+              flexShrink: 0,
+              width: "22%",
+              aspectRatio: "1/1",
+              background: "#e5e7eb",
+              border: "1.5px solid #9ca3af",
+              borderRadius: 4,
+              overflow: "hidden",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.18)",
+            }}
+          >
+            {card.face_image_url ? (
+              <img
+                src={card.face_image_url}
+                alt="ID Photo"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  objectPosition: "top",
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "#f3f4f6",
+                  gap: 4,
+                }}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  style={{ width: "40%", height: "40%", color: "#9ca3af" }}
+                  fill="currentColor"
+                >
+                  <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" />
+                </svg>
+                <span
+                  style={{
+                    fontSize: "clamp(5px,0.8vw,8px)",
+                    color: "#9ca3af",
+                    textAlign: "center",
+                    lineHeight: 1.2,
+                  }}
+                >
+                  1×1
+                  <br />
+                  PHOTO
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Barangay ── */}
+        <div
+          style={{
+            marginTop: "1.5%",
+            display: "flex",
+            alignItems: "baseline",
+            justifyContent: "center",
+            gap: 6,
+          }}
+        >
+          <span
+            style={{
+              fontSize: "clamp(5px,1vw,9.5px)",
+              color: "#1f2937",
+              fontWeight: 700,
+              flexShrink: 0,
+            }}
+          >
+            Barangay:
+          </span>
+          <span
+            style={{
+              display: "inline-block",
+              borderBottom: "1px solid #374151",
+              textAlign: "center",
+              fontWeight: 700,
+              color: "#111827",
+              fontSize: "clamp(5px,1vw,9.5px)",
+              padding: "0 16px 1px",
+              minWidth: 80,
+            }}
+          >
+            {card.barangay || "\u00A0"}
+          </span>
+        </div>
+
+        {/* ── Name ── */}
+        <div style={{ marginTop: "2%", textAlign: "center" }}>
+          <div
+            style={{
+              borderBottom: "1.5px solid #4b5563",
+              paddingBottom: 2,
+              fontSize: "clamp(9px,1.9vw,18px)",
+              fontWeight: 900,
+              color: "#111827",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+            }}
+          >
+            {card.name || "\u00A0"}
+          </div>
+          <div
+            style={{
+              fontSize: "clamp(5px,0.85vw,8.5px)",
+              color: "#dc2626",
+              fontWeight: 700,
+              marginTop: 2,
+            }}
+          >
+            Name
+          </div>
+        </div>
+
+        {/* ── Disability ── */}
+        <div style={{ marginTop: "2%", textAlign: "center" }}>
+          <div
+            style={{
+              borderBottom: "1px solid #4b5563",
+              paddingBottom: 2,
+              fontSize: "clamp(7px,1.4vw,13px)",
+              fontWeight: 700,
+              color: "#111827",
+              letterSpacing: "0.04em",
+            }}
+          >
+            {card.type_of_disability || "\u00A0"}
+          </div>
+          <div
+            style={{
+              fontSize: "clamp(5px,0.85vw,8.5px)",
+              color: "#dc2626",
+              fontWeight: 700,
+              marginTop: 2,
+            }}
+          >
+            Type of Disability
+          </div>
+        </div>
+
+        {/* ── Signature + Card ID row ── */}
+        <div
+          style={{
+            marginTop: "2%",
+            display: "flex",
+            alignItems: "flex-end",
+            gap: "4%",
+          }}
+        >
+          {/* Signature */}
+          <div style={{ flex: 1 }}>
+            <div
+              style={{
+                borderBottom: "1px solid #4b5563",
+                height: "clamp(18px,4.5vw,40px)",
+                overflow: "hidden",
+              }}
+            >
+              {card.signature_image_url ? (
+                <img
+                  src={card.signature_image_url}
+                  alt="Signature"
+                  style={{
+                    height: "100%",
+                    objectFit: "contain",
+                    objectPosition: "left",
+                    filter: "contrast(1.3)",
+                  }}
+                />
+              ) : (
+                <div style={{ width: "100%", height: "100%" }} />
+              )}
+            </div>
+            <div
+              style={{
+                fontSize: "clamp(5px,0.85vw,8.5px)",
+                color: "#dc2626",
+                fontWeight: 700,
+                textAlign: "center",
+                marginTop: 2,
+              }}
+            >
+              Signature
+            </div>
+          </div>
+
+          {/* Card ID */}
+          <div style={{ flexShrink: 0, textAlign: "right" }}>
+            <div
+              style={{
+                fontSize: "clamp(7px,1.5vw,14px)",
+                fontWeight: 900,
+                color: "#111827",
+                letterSpacing: "0.05em",
+                fontFamily: "monospace",
+              }}
+            >
+              {card.card_id || "PENDING"}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Footer ── */}
+        <div
+          style={{ marginTop: "auto", paddingTop: "1.5%", textAlign: "center" }}
+        >
+          <span
+            style={{
+              fontSize: "clamp(5.5px,1.1vw,11px)",
+              fontWeight: 900,
+              color: "#1d4ed8",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+            }}
+          >
+            Valid Anywhere in the Country
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Card Back ────────────────────────────────────────────────────────────────
+
+function CardBack({ card }: { card: CardItem }) {
+  const expiryDate = getExpiryDate(card);
+  const isExpired = expiryDate ? new Date() > expiryDate : false;
+
+  let validityLabel = "";
+  let validityColor = "#15803d";
+  if (expiryDate) {
+    const diffDays = Math.ceil(
+      (expiryDate.getTime() - new Date().getTime()) / 86400000,
+    );
+    if (isExpired) {
+      validityLabel = "EXPIRED";
+      validityColor = "#dc2626";
+    } else if (diffDays <= 90) {
+      validityLabel = `Expiring soon — ${diffDays} days left`;
+      validityColor = "#d97706";
+    } else {
+      validityLabel = `Valid — ${diffDays} days left`;
+      validityColor = "#15803d";
+    }
+  }
+
+  const row = (label: string, value: string, flex = 1) => (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 4, flex }}>
+      <span
+        style={{
+          flexShrink: 0,
+          fontSize: "clamp(5px,0.9vw,8.5px)",
+          fontWeight: 700,
+          color: "#1f2937",
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          flex: 1,
+          borderBottom: "1px solid #374151",
+          textAlign: "center",
+          fontWeight: 700,
+          color: "#111827",
+          fontSize: "clamp(5.5px,1vw,9.5px)",
+          paddingBottom: 1,
+        }}
+      >
+        {value || "\u00A0"}
+      </span>
+    </div>
+  );
+
+  return (
+    <div
+      style={{
+        width: "100%",
+        aspectRatio: "1.585 / 1",
+        position: "relative",
+        background:
+          "linear-gradient(135deg, #fdfbe4 0%, #f7f3c8 50%, #fdfbe4 100%)",
+        border: "1.5px solid #d4c87a",
+        borderRadius: 14,
+        overflow: "hidden",
+        fontFamily: "'Georgia', serif",
+        userSelect: "none",
+      }}
+    >
+      {/* Texture */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          opacity: 0.08,
+          pointerEvents: "none",
+          backgroundImage:
+            "repeating-linear-gradient(45deg, #c8b400 0px, #c8b400 1px, transparent 1px, transparent 8px)",
+        }}
+      />
+
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          padding: "3.5% 4% 2.5%",
+          gap: "3%",
+          boxSizing: "border-box",
+        }}
+      >
+        {/* Address */}
+        {row("Address:", card.address)}
+
+        {/* DOB + Sex */}
+        <div style={{ display: "flex", gap: "3%" }}>
+          {row(
+            "Date of Birth:",
+            safeFormat(card.date_of_birth, "MM/dd/yyyy"),
+            2,
+          )}
+          {row("Sex:", card.sex, 1)}
+        </div>
+
+        {/* Date Issued + Blood Type */}
+        <div style={{ display: "flex", gap: "3%" }}>
+          {row("Date Issued:", safeFormat(card.date_issued, "MM/dd/yyyy"), 2)}
+          {row("Blood Type:", card.blood_type, 1)}
+        </div>
+
+        {/* Validity */}
+        {validityLabel && (
+          <div style={{ textAlign: "right" }}>
+            <span
+              style={{
+                fontSize: "clamp(5px,0.95vw,9px)",
+                fontWeight: 700,
+                color: validityColor,
+              }}
+            >
+              {validityLabel}
+            </span>
+          </div>
+        )}
+
+        {/* Emergency heading */}
+        <div style={{ textAlign: "center", marginTop: "0.5%" }}>
+          <span
+            style={{
+              fontSize: "clamp(6px,1.15vw,11px)",
+              fontWeight: 900,
+              color: "#dc2626",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+            }}
+          >
+            In Case of Emergency Please Notify
+          </span>
+        </div>
+
+        {/* Emergency Name */}
+        {row("Name:", card.emergency_contact_name)}
+
+        {/* Emergency Contact No */}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+          <span
+            style={{
+              flexShrink: 0,
+              fontSize: "clamp(5px,0.9vw,8.5px)",
+              fontWeight: 700,
+              color: "#1f2937",
+              textTransform: "uppercase",
+            }}
+          >
+            Contact No:
+          </span>
+          <span
+            style={{
+              width: "55%",
+              borderBottom: "1px solid #374151",
+              textAlign: "center",
+              fontWeight: 700,
+              color: "#111827",
+              fontSize: "clamp(5.5px,1vw,9.5px)",
+              paddingBottom: 1,
+            }}
+          >
+            {card.emergency_contact_number || "\u00A0"}
+          </span>
+        </div>
+
+        {/* Footer */}
+        <div style={{ marginTop: "auto", textAlign: "center" }}>
+          <div
+            style={{
+              fontSize: "clamp(5px,0.95vw,9px)",
+              fontWeight: 700,
+              color: "#dc2626",
+              fontStyle: "italic",
+            }}
+          >
+            Valid for three (3) years upon issuance of the PWD ID
+          </div>
+          {expiryDate && (
+            <div
+              style={{
+                fontSize: "clamp(4.5px,0.85vw,8px)",
+                color: "#6b7280",
+                marginTop: 2,
+              }}
+            >
+              Expires: {format(expiryDate, "MMMM dd, yyyy")}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Flippable PWD Card wrapper ───────────────────────────────────────────────
+
+function FlippablePWDCard({ card }: { card: CardItem }) {
+  const [isFlipped, setIsFlipped] = useState(false);
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 12,
+      }}
+    >
+      {/* Hint button */}
+      <button
+        onClick={() => setIsFlipped((f) => !f)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          fontSize: 12,
+          color: "#78716c",
+          fontWeight: 600,
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          transition: "color 0.2s",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.color = "#b45309")}
+        onMouseLeave={(e) => (e.currentTarget.style.color = "#78716c")}
+      >
+        <RotateCcw style={{ width: 13, height: 13 }} />
+        {isFlipped ? "Show front" : "Flip to see back"}
+      </button>
+
+      {/* 3-D flip scene */}
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 480,
+          perspective: 1400,
+          cursor: "pointer",
+        }}
+        onClick={() => setIsFlipped((f) => !f)}
+      >
+        <div
+          style={{
+            position: "relative",
+            width: "100%",
+            transformStyle: "preserve-3d",
+            transition: "transform 0.65s cubic-bezier(0.4,0,0.2,1)",
+            transform: isFlipped ? "rotateY(180deg)" : "rotateY(0deg)",
+          }}
+        >
+          {/* Front */}
+          <div
+            style={{
+              width: "100%",
+              backfaceVisibility: "hidden",
+              WebkitBackfaceVisibility: "hidden",
+            }}
+          >
+            <CardFront card={card} />
+          </div>
+
+          {/* Back — positioned absolute + rotated 180° so it sits behind front */}
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              backfaceVisibility: "hidden",
+              WebkitBackfaceVisibility: "hidden",
+              transform: "rotateY(180deg)",
+            }}
+          >
+            <CardBack card={card} />
+          </div>
+        </div>
+      </div>
+
+      {/* Admin notes */}
+      {card.admin_notes && (
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            padding: "10px 12px",
+            background: "#fffbeb",
+            border: "1px solid #fcd34d",
+            borderRadius: 8,
+            width: "100%",
+            maxWidth: 480,
+            boxSizing: "border-box",
+          }}
+        >
+          <AlertTriangle
+            style={{
+              width: 14,
+              height: 14,
+              color: "#d97706",
+              flexShrink: 0,
+              marginTop: 1,
+            }}
+          />
+          <div>
+            <p
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: "#92400e",
+                marginBottom: 2,
+              }}
+            >
+              Admin Notes
+            </p>
+            <p style={{ fontSize: 11, color: "#b45309" }}>{card.admin_notes}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -263,34 +981,9 @@ function StatCard({
   );
 }
 
-function DetailRow({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: any;
-  label: string;
-  value: string | React.ReactNode;
-}) {
-  return (
-    <div className="flex items-start gap-3 py-2.5 border-b border-slate-100 last:border-0">
-      <div className="mt-0.5 p-1.5 rounded-md bg-slate-100">
-        <Icon className="h-3.5 w-3.5 text-slate-500" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs text-slate-500 font-medium mb-0.5">{label}</p>
-        <p className="text-sm text-slate-800 font-medium truncate">
-          {value || "N/A"}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CardsPage() {
-  // ── Card + application data ──
   const [cards, setCards] = useState<CardItem[]>([]);
   const [filteredCards, setFilteredCards] = useState<CardItem[]>([]);
   const [pendingCards, setPendingCards] = useState<CardItem[]>([]);
@@ -306,21 +999,16 @@ export default function CardsPage() {
   const [stats, setStats] = useState<Statistics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // ── Filters ──
   const [searchTerm, setSearchTerm] = useState("");
   const [pendingSearchTerm, setPendingSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [barangayFilter, setBarangayFilter] = useState<string>("all");
 
-  // ── Selected items ──
   const [selectedCard, setSelectedCard] = useState<CardItem | null>(null);
   const [selectedApplication, setSelectedApplication] =
     useState<Application | null>(null);
 
-  // ── Modals ──
   const [isViewCardModalOpen, setIsViewCardModalOpen] = useState(false);
-
-  // Shared Card ID modal — mode tracks which flow opened it
   const [isCardIdModalOpen, setIsCardIdModalOpen] = useState(false);
   const [cardIdInput, setCardIdInput] = useState("");
   const [cardIdError, setCardIdError] = useState("");
@@ -329,7 +1017,6 @@ export default function CardsPage() {
   );
   const cardIdInputRef = useRef<HTMLInputElement>(null);
 
-  // Reject / revoke dialogs
   const [rejectTarget, setRejectTarget] = useState<
     "card" | "application" | null
   >(null);
@@ -338,13 +1025,11 @@ export default function CardsPage() {
   const [revokeReason, setRevokeReason] = useState("");
   const [rejectReason, setRejectReason] = useState("");
 
-  // ── Loading states ──
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [userRole, setUserRole] = useState<string>("viewer");
   const [isLoadingRole, setIsLoadingRole] = useState(true);
   const [activeTab, setActiveTab] = useState("cards");
 
-  // ── Auth ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const fetchRole = async () => {
       setIsLoadingRole(true);
@@ -371,7 +1056,6 @@ export default function CardsPage() {
     "mswd-cswdo-pdao",
   ].includes(userRole.toLowerCase());
 
-  // ── Data fetching ─────────────────────────────────────────────────────────
   const fetchData = async () => {
     setIsLoading(true);
     try {
@@ -380,7 +1064,6 @@ export default function CardsPage() {
         getCardStatistics(),
         getApplications({ status: "Submitted" }),
       ]);
-
       if (cardsResult.success) {
         const issued = (cardsResult.data as CardItem[]).filter(
           (c) => c.status !== "Pending",
@@ -392,12 +1075,8 @@ export default function CardsPage() {
         setFilteredCards(issued);
         setPendingCards(pending);
         setFilteredPendingCards(pending);
-      } else {
-        toast.error("Failed to fetch cards");
-      }
-
+      } else toast.error("Failed to fetch cards");
       if (statsResult.success) setStats(statsResult.data ?? null);
-
       if (appsResult.success) {
         const submitted = (appsResult.data as Application[]).filter(
           (a) => a.status === "Submitted",
@@ -416,7 +1095,6 @@ export default function CardsPage() {
     fetchData();
   }, []);
 
-  // ── Filters ───────────────────────────────────────────────────────────────
   useEffect(() => {
     let f = cards;
     if (searchTerm)
@@ -433,8 +1111,8 @@ export default function CardsPage() {
   }, [searchTerm, statusFilter, barangayFilter, cards]);
 
   useEffect(() => {
-    let fc = pendingCards;
-    let fa = pendingApplications;
+    let fc = pendingCards,
+      fa = pendingApplications;
     if (pendingSearchTerm) {
       const q = pendingSearchTerm.toLowerCase();
       fc = fc.filter(
@@ -454,9 +1132,6 @@ export default function CardsPage() {
     setFilteredPendingApps(fa);
   }, [pendingSearchTerm, pendingCards, pendingApplications]);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
-
-  // Opens the Card ID modal for a submitted application
   const handleApproveClick = (application: Application) => {
     setSelectedApplication(application);
     setSelectedCard(null);
@@ -467,7 +1142,6 @@ export default function CardsPage() {
     setTimeout(() => cardIdInputRef.current?.focus(), 150);
   };
 
-  // Opens the Card ID modal for a pending card (card_id is null in DB)
   const handleActivatePendingCardClick = (card: CardItem) => {
     setSelectedCard(card);
     setSelectedApplication(null);
@@ -478,7 +1152,6 @@ export default function CardsPage() {
     setTimeout(() => cardIdInputRef.current?.focus(), 150);
   };
 
-  // Unified submit for both issue and activate flows
   const handleCardIdSubmit = async () => {
     const trimmed = cardIdInput.trim();
     if (!trimmed) {
@@ -488,7 +1161,6 @@ export default function CardsPage() {
     }
     setCardIdError("");
     setIsSubmitting(true);
-
     try {
       if (cardIdModalMode === "issue" && selectedApplication) {
         const result = await issueCard(
@@ -503,7 +1175,6 @@ export default function CardsPage() {
           await fetchData();
           setActiveTab("cards");
         } else {
-          // Show all errors inline — includes format errors and duplicates
           setCardIdError(result.error || "Failed to issue card");
           cardIdInputRef.current?.focus();
         }
@@ -517,7 +1188,6 @@ export default function CardsPage() {
           await fetchData();
           setActiveTab("cards");
         } else {
-          // Show all errors inline — includes format errors and duplicates
           setCardIdError(result.error || "Failed to activate card");
           cardIdInputRef.current?.focus();
         }
@@ -529,7 +1199,6 @@ export default function CardsPage() {
     }
   };
 
-  // Close card ID modal cleanly
   const handleCardIdModalClose = () => {
     if (isSubmitting) return;
     setIsCardIdModalOpen(false);
@@ -539,13 +1208,11 @@ export default function CardsPage() {
     setSelectedCard(null);
   };
 
-  // Revoke
   const handleRevokeClick = () => {
     setIsViewCardModalOpen(false);
     setRevokeReason("");
     setShowRevokeDialog(true);
   };
-
   const handleRevokeCancel = () => {
     setShowRevokeDialog(false);
     setRevokeReason("");
@@ -564,9 +1231,7 @@ export default function CardsPage() {
         setSelectedCard(null);
         setRevokeReason("");
         await fetchData();
-      } else {
-        toast.error(result.error || "Failed to revoke card");
-      }
+      } else toast.error(result.error || "Failed to revoke card");
     } catch {
       toast.error("Error revoking card");
     } finally {
@@ -574,7 +1239,6 @@ export default function CardsPage() {
     }
   };
 
-  // Reject pending card → Revoked
   const handleRejectPendingCard = async () => {
     if (!selectedCard || !rejectReason.trim()) return;
     setIsSubmitting(true);
@@ -589,9 +1253,7 @@ export default function CardsPage() {
         setSelectedCard(null);
         setRejectReason("");
         await fetchData();
-      } else {
-        toast.error(result.error || "Failed to reject card");
-      }
+      } else toast.error(result.error || "Failed to reject card");
     } catch {
       toast.error("Error rejecting card");
     } finally {
@@ -599,7 +1261,6 @@ export default function CardsPage() {
     }
   };
 
-  // Reject submitted application
   const handleRejectApplication = async () => {
     if (!selectedApplication || !rejectReason.trim()) return;
     setIsSubmitting(true);
@@ -614,9 +1275,7 @@ export default function CardsPage() {
         setSelectedApplication(null);
         setRejectReason("");
         await fetchData();
-      } else {
-        toast.error(result.error || "Failed to reject application");
-      }
+      } else toast.error(result.error || "Failed to reject application");
     } catch {
       toast.error("Error rejecting application");
     } finally {
@@ -629,13 +1288,11 @@ export default function CardsPage() {
     else if (rejectTarget === "application") await handleRejectApplication();
   };
 
-  // ── Derived ───────────────────────────────────────────────────────────────
   const barangays = [...new Set(cards.map((c) => c.barangay))]
     .filter(Boolean)
     .sort() as string[];
   const totalPending = pendingCards.length + pendingApplications.length;
 
-  // Modal display values derived from mode
   const cardIdModalTitle =
     cardIdModalMode === "activate"
       ? "Activate Pending Card"
@@ -655,7 +1312,6 @@ export default function CardsPage() {
       ? (selectedCard?.name?.charAt(0) ?? "?")
       : (selectedApplication?.first_name?.charAt(0) ?? "?");
 
-  // ── Loading screen ────────────────────────────────────────────────────────
   if (isLoadingRole) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -667,7 +1323,6 @@ export default function CardsPage() {
     );
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-50/50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
@@ -767,7 +1422,7 @@ export default function CardsPage() {
             )}
           </TabsList>
 
-          {/* ══ Issued Cards ══ */}
+          {/* ── Issued Cards ── */}
           <TabsContent value="cards" className="space-y-4 mt-0">
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
               <div className="flex flex-col md:flex-row gap-3">
@@ -820,7 +1475,6 @@ export default function CardsPage() {
                   {filteredCards.length === 1 ? "record" : "records"}
                 </span>
               </div>
-
               {isLoading ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
                   <div className="w-8 h-8 rounded-full border-4 border-blue-100 border-t-blue-600 animate-spin" />
@@ -877,7 +1531,7 @@ export default function CardsPage() {
                                 {card.card_id}
                               </span>
                               <span className="flex items-center gap-1">
-                                <Calendar className="h-3 w-3" />
+                                <Clock className="h-3 w-3" />
                                 Issued{" "}
                                 {safeFormat(card.date_issued, "MMM dd, yyyy")}
                               </span>
@@ -925,7 +1579,7 @@ export default function CardsPage() {
             </div>
           </TabsContent>
 
-          {/* ══ Pending Approvals ══ */}
+          {/* ── Pending Approvals ── */}
           {isStaff && (
             <TabsContent value="pending" className="space-y-4 mt-0">
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
@@ -940,7 +1594,6 @@ export default function CardsPage() {
                 </div>
               </div>
 
-              {/* Pending Cards */}
               {(filteredPendingCards.length > 0 || isLoading) && (
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="flex items-center gap-2 px-5 py-4 border-b border-slate-100">
@@ -985,7 +1638,7 @@ export default function CardsPage() {
                                   No card ID assigned yet
                                 </span>
                                 <span className="flex items-center gap-1">
-                                  <Calendar className="h-3 w-3" />
+                                  <Clock className="h-3 w-3" />
                                   {safeFormat(card.created_at, "MMM dd, yyyy")}
                                 </span>
                                 <span className="flex items-center gap-1">
@@ -1046,7 +1699,6 @@ export default function CardsPage() {
                 </div>
               )}
 
-              {/* Submitted Applications */}
               {(filteredPendingApps.length > 0 || isLoading) && (
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="flex items-center gap-2 px-5 py-4 border-b border-slate-100">
@@ -1100,7 +1752,7 @@ export default function CardsPage() {
                               <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
                                 <span>App #{app.application_id}</span>
                                 <span className="flex items-center gap-1">
-                                  <Calendar className="h-3 w-3" />
+                                  <Clock className="h-3 w-3" />
                                   {safeFormat(app.created_at, "MMM dd, yyyy")}
                                 </span>
                                 <span className="flex items-center gap-1">
@@ -1149,7 +1801,6 @@ export default function CardsPage() {
                 </div>
               )}
 
-              {/* Empty state */}
               {!isLoading &&
                 filteredPendingCards.length === 0 &&
                 filteredPendingApps.length === 0 && (
@@ -1170,11 +1821,7 @@ export default function CardsPage() {
         </Tabs>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          CARD ID INPUT MODAL
-          mode="issue"    → Approve submitted application
-          mode="activate" → Activate pending card (card_id is null in DB)
-      ══════════════════════════════════════════════════════════════════════ */}
+      {/* ══ CARD ID MODAL ══ */}
       <Dialog
         open={isCardIdModalOpen}
         onOpenChange={(open) => {
@@ -1188,9 +1835,7 @@ export default function CardsPage() {
               {cardIdModalTitle}
             </DialogTitle>
           </DialogHeader>
-
           <div className="space-y-5 py-1">
-            {/* Person summary */}
             {cardIdModalName && (
               <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
                 <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-100 to-emerald-200 flex items-center justify-center shrink-0">
@@ -1208,8 +1853,6 @@ export default function CardsPage() {
                 </div>
               </div>
             )}
-
-            {/* Format hint banner */}
             <div className="flex items-start gap-2.5 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
               <div className="space-y-0.5">
@@ -1224,8 +1867,6 @@ export default function CardsPage() {
                 </p>
               </div>
             </div>
-
-            {/* Card ID input */}
             <div className="space-y-2">
               <Label
                 htmlFor="card-id-input"
@@ -1245,11 +1886,7 @@ export default function CardsPage() {
                   if (e.key === "Enter" && !isSubmitting) handleCardIdSubmit();
                 }}
                 placeholder="06-4511-001-1234567"
-                className={`font-mono text-base h-11 ${
-                  cardIdError
-                    ? "border-red-400 focus-visible:ring-red-400"
-                    : "focus-visible:ring-emerald-400"
-                }`}
+                className={`font-mono text-base h-11 ${cardIdError ? "border-red-400 focus-visible:ring-red-400" : "focus-visible:ring-emerald-400"}`}
                 disabled={isSubmitting}
               />
               {cardIdError ? (
@@ -1265,7 +1902,6 @@ export default function CardsPage() {
               )}
             </div>
           </div>
-
           <DialogFooter className="gap-2 pt-2">
             <Button
               variant="outline"
@@ -1298,218 +1934,50 @@ export default function CardsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          VIEW CARD MODAL
-      ══════════════════════════════════════════════════════════════════════ */}
+      {/* ══ VIEW CARD MODAL — FLIPPABLE ══ */}
       <Dialog open={isViewCardModalOpen} onOpenChange={setIsViewCardModalOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-0">
-          {selectedCard &&
-            (() => {
-              const expiryDate = getExpiryDate(selectedCard);
-              const isExpired = expiryDate ? new Date() > expiryDate : false;
-              return (
-                <>
-                  <div className="relative bg-gradient-to-br from-blue-600 to-blue-700 px-6 pt-6 pb-10 rounded-t-lg overflow-hidden">
-                    <div className="absolute inset-0 opacity-10">
-                      <div className="absolute top-2 right-8 w-32 h-32 rounded-full border-4 border-white" />
-                      <div className="absolute -top-4 right-16 w-20 h-20 rounded-full border-4 border-white" />
-                    </div>
-                    <DialogHeader className="relative">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <p className="text-blue-200 text-xs font-medium uppercase tracking-widest mb-1">
-                            PWD ID Card
-                          </p>
-                          <DialogTitle className="text-white text-2xl font-bold">
-                            {selectedCard.name}
-                          </DialogTitle>
-                          <p className="text-blue-200 text-sm mt-1 font-mono">
-                            {selectedCard.card_id || (
-                              <span className="italic opacity-70">
-                                No card ID yet
-                              </span>
-                            )}
-                          </p>
-                        </div>
-                        <div className="mt-1">
-                          <StatusBadge
-                            status={selectedCard.status}
-                            isExpired={isExpired}
-                          />
-                        </div>
-                      </div>
-                    </DialogHeader>
-                  </div>
+        <DialogContent className="max-w-xl">
+          {selectedCard && (
+            <>
+              <DialogHeader className="pb-1">
+                <DialogTitle className="flex items-center gap-2 text-slate-800">
+                  <CreditCard className="h-5 w-5 text-amber-600" />
+                  PWD ID Card — {selectedCard.name}
+                </DialogTitle>
+              </DialogHeader>
 
-                  <div className="px-6 pt-4 pb-6 -mt-4 space-y-5">
-                    <div className="flex flex-wrap gap-2 bg-white rounded-xl border border-slate-200 p-4 shadow-sm -mt-8 relative">
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
-                        <User className="h-3 w-3" />
-                        {selectedCard.sex || "N/A"}
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-red-50 text-red-700 text-xs font-semibold border border-red-100">
-                        <Droplets className="h-3 w-3" />
-                        {selectedCard.blood_type || "N/A"}
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
-                        <Calendar className="h-3 w-3" />
-                        Age {calculateAge(selectedCard.date_of_birth) ?? "N/A"}
-                      </span>
-                      <span className="ml-auto font-mono text-xs text-slate-400">
-                        User #{selectedCard.user_id}
-                      </span>
-                    </div>
+              <div className="py-2">
+                <FlippablePWDCard card={selectedCard} />
+              </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-                          Personal Information
-                        </p>
-                        <DetailRow
-                          icon={Calendar}
-                          label="Date of Birth"
-                          value={safeFormat(
-                            selectedCard.date_of_birth,
-                            "MMMM dd, yyyy",
-                          )}
-                        />
-                        <DetailRow
-                          icon={MapPin}
-                          label="Barangay"
-                          value={selectedCard.barangay}
-                        />
-                        <DetailRow
-                          icon={FileText}
-                          label="Address"
-                          value={selectedCard.address}
-                        />
-                        <DetailRow
-                          icon={Activity}
-                          label="Disability Type"
-                          value={selectedCard.type_of_disability}
-                        />
-                      </div>
-                      <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-                          Card Information
-                        </p>
-                        <DetailRow
-                          icon={Calendar}
-                          label="Date Issued"
-                          value={safeFormat(
-                            selectedCard.date_issued,
-                            "MMMM dd, yyyy",
-                          )}
-                        />
-                        <DetailRow
-                          icon={Calendar}
-                          label="Expiry Date"
-                          value={
-                            expiryDate ? (
-                              <span
-                                className={
-                                  isExpired ? "text-red-600" : "text-slate-800"
-                                }
-                              >
-                                {format(expiryDate, "MMMM dd, yyyy")}
-                                {isExpired && " (Expired)"}
-                              </span>
-                            ) : (
-                              "N/A"
-                            )
-                          }
-                        />
-                        {selectedCard.verification_count > 0 && (
-                          <>
-                            <DetailRow
-                              icon={ShieldCheck}
-                              label="Verifications"
-                              value={`${selectedCard.verification_count} times`}
-                            />
-                            {selectedCard.last_verified_at && (
-                              <DetailRow
-                                icon={Clock}
-                                label="Last Verified"
-                                value={safeFormat(
-                                  selectedCard.last_verified_at,
-                                  "MMM dd, yyyy HH:mm",
-                                )}
-                              />
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-                        Emergency Contact
-                      </p>
-                      <div className="flex flex-col sm:flex-row gap-4">
-                        <div className="flex-1">
-                          <p className="text-xs text-slate-500 mb-0.5">Name</p>
-                          <p className="text-sm font-semibold text-slate-800">
-                            {selectedCard.emergency_contact_name || "N/A"}
-                          </p>
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-xs text-slate-500 mb-0.5">
-                            Number
-                          </p>
-                          <p className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
-                            <Phone className="h-3.5 w-3.5 text-slate-400" />
-                            {selectedCard.emergency_contact_number || "N/A"}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {selectedCard.admin_notes && (
-                      <div className="flex gap-3 p-3.5 bg-amber-50 rounded-xl border border-amber-200">
-                        <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-xs font-semibold text-amber-700 mb-0.5">
-                            Admin Notes
-                          </p>
-                          <p className="text-sm text-amber-800">
-                            {selectedCard.admin_notes}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <DialogFooter className="px-6 pb-6 gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setIsViewCardModalOpen(false);
-                        setSelectedCard(null);
-                      }}
-                      className="border-slate-200"
-                    >
-                      Close
-                    </Button>
-                    {isStaff && selectedCard.status === "Active" && (
-                      <Button
-                        variant="destructive"
-                        onClick={handleRevokeClick}
-                        className="bg-red-600 hover:bg-red-700"
-                      >
-                        <Ban className="h-4 w-4 mr-2" />
-                        Revoke Card
-                      </Button>
-                    )}
-                  </DialogFooter>
-                </>
-              );
-            })()}
+              <DialogFooter className="gap-2 pt-2 border-t border-slate-100">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsViewCardModalOpen(false);
+                    setSelectedCard(null);
+                  }}
+                  className="border-slate-200"
+                >
+                  Close
+                </Button>
+                {isStaff && selectedCard.status === "Active" && (
+                  <Button
+                    variant="destructive"
+                    onClick={handleRevokeClick}
+                    className="bg-red-600 hover:bg-red-700"
+                  >
+                    <Ban className="h-4 w-4 mr-2" />
+                    Revoke Card
+                  </Button>
+                )}
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          REJECT DIALOG
-      ══════════════════════════════════════════════════════════════════════ */}
+      {/* ══ REJECT DIALOG ══ */}
       <AlertDialog open={showRejectDialog} onOpenChange={setShowRejectDialog}>
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
@@ -1581,9 +2049,7 @@ export default function CardsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          REVOKE DIALOG
-      ══════════════════════════════════════════════════════════════════════ */}
+      {/* ══ REVOKE DIALOG ══ */}
       <AlertDialog
         open={showRevokeDialog}
         onOpenChange={(open) => {
