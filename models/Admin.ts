@@ -105,15 +105,14 @@ const AdminSchema = new Schema<IAdmin>(
 );
 
 // Pre-validate: Ensure admin_id exists before validation
-AdminSchema.pre("validate", function (next) {
+AdminSchema.pre("validate", function () {
   if (!this.admin_id) {
     this.admin_id = generateAdminId();
   }
-  next();
 });
 
-// Single pre-save hook: unique admin_id check + capitalize names + hash password
-AdminSchema.pre("save", async function (next) {
+// Pre-save hook: unique admin_id check + capitalize names + hash password
+AdminSchema.pre("save", async function () {
   const admin = this as IAdmin & { isModified: (path: string) => boolean };
 
   // ── 1. Ensure unique admin_id ──────────────────────────────────────────────
@@ -142,10 +141,8 @@ AdminSchema.pre("save", async function (next) {
       }
 
       if (!isUnique) {
-        return next(
-          new Error(
-            "Failed to generate unique admin ID after multiple attempts",
-          ),
+        throw new Error(
+          "Failed to generate unique admin ID after multiple attempts",
         );
       }
     }
@@ -178,16 +175,9 @@ AdminSchema.pre("save", async function (next) {
   }
 
   // ── 3. Hash password if modified ──────────────────────────────────────────
-  if (!admin.isModified("password")) {
-    return next();
-  }
-
-  try {
+  if (admin.isModified("password")) {
     const salt = await bcrypt.genSalt(10);
     admin.password = await bcrypt.hash(admin.password, salt);
-    next();
-  } catch (err: any) {
-    next(err);
   }
 });
 
