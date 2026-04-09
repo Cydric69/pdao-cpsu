@@ -220,11 +220,9 @@ export default function UsersPage() {
 
     const checkAuth = async () => {
       try {
-        // Sync with server to ensure auth state is up to date
         await syncWithServer();
 
         if (isMounted) {
-          // Check if user exists
           if (!isAuthenticated || !user) {
             console.log("No user found or not authenticated");
             toast.error("Please login to access this page.");
@@ -232,7 +230,6 @@ export default function UsersPage() {
             return;
           }
 
-          // Check role - MSWD-CSWDO-PDAO or Superadmin
           if (user.role !== "MSWD-CSWDO-PDAO" && user.role !== "Superadmin") {
             console.log("User has insufficient permissions, role:", user.role);
             toast.error("Access denied. Insufficient permissions.");
@@ -259,7 +256,7 @@ export default function UsersPage() {
     return () => {
       isMounted = false;
     };
-  }, []); // Empty dependency array - run only once on mount
+  }, []);
 
   // ── User filters ──
   useEffect(() => {
@@ -417,35 +414,100 @@ export default function UsersPage() {
 
   const validateAdminForm = (): boolean => {
     const errors: Partial<AdminFormData> = {};
-    if (!adminForm.first_name.trim()) errors.first_name = "Required";
-    if (!adminForm.last_name.trim()) errors.last_name = "Required";
-    if (!adminForm.email.trim()) errors.email = "Required";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminForm.email))
-      errors.email = "Invalid email";
-    if (!adminForm.password) errors.password = "Required";
-    else if (adminForm.password.length < 8)
-      errors.password = "Minimum 8 characters";
-    if (adminForm.password !== adminForm.confirm_password)
+
+    if (!adminForm.first_name.trim()) {
+      errors.first_name = "First name is required";
+    } else if (adminForm.first_name.length < 2) {
+      errors.first_name = "First name must be at least 2 characters";
+    }
+
+    if (!adminForm.last_name.trim()) {
+      errors.last_name = "Last name is required";
+    } else if (adminForm.last_name.length < 2) {
+      errors.last_name = "Last name must be at least 2 characters";
+    }
+
+    if (!adminForm.email.trim()) {
+      errors.email = "Email is required";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminForm.email)) {
+      errors.email = "Please enter a valid email address";
+    }
+
+    if (!adminForm.password) {
+      errors.password = "Password is required";
+    } else if (adminForm.password.length < 8) {
+      errors.password = "Password must be at least 8 characters";
+    } else if (!/[A-Z]/.test(adminForm.password)) {
+      errors.password = "Password must contain at least one uppercase letter";
+    } else if (!/[a-z]/.test(adminForm.password)) {
+      errors.password = "Password must contain at least one lowercase letter";
+    } else if (!/[0-9]/.test(adminForm.password)) {
+      errors.password = "Password must contain at least one number";
+    }
+
+    if (adminForm.password !== adminForm.confirm_password) {
       errors.confirm_password = "Passwords do not match";
-    if (!adminForm.address.trim()) errors.address = "Required";
-    if (!adminForm.phone_number.trim()) errors.phone_number = "Required";
+    }
+
+    if (!adminForm.address.trim()) {
+      errors.address = "Address is required";
+    } else if (adminForm.address.length < 5) {
+      errors.address = "Please enter a complete address";
+    }
+
+    if (!adminForm.phone_number.trim()) {
+      errors.phone_number = "Phone number is required";
+    } else if (!/^[0-9]{11}$/.test(adminForm.phone_number.replace(/\D/g, ""))) {
+      errors.phone_number = "Please enter a valid 11-digit phone number";
+    }
+
     const age = parseInt(adminForm.age);
-    if (!adminForm.age || isNaN(age) || age < 18 || age > 100)
-      errors.age = "Must be 18–100";
+    if (!adminForm.age) {
+      errors.age = "Age is required";
+    } else if (isNaN(age)) {
+      errors.age = "Please enter a valid number";
+    } else if (age < 18) {
+      errors.age = "Admin must be at least 18 years old";
+    } else if (age > 100) {
+      errors.age = "Age must be less than 100";
+    }
+
     setAdminFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
   const handleCreateAdmin = async () => {
     if (!validateAdminForm()) return;
+
     setIsAdminSubmitting(true);
     try {
       const { confirm_password, ...payload } = adminForm;
-      const result = await createAdmin({
-        ...payload,
-        age: parseInt(payload.age),
-        role: "MSWD-CSWDO-PDAO",
-      });
+
+      const ageNum = parseInt(payload.age);
+      if (isNaN(ageNum)) {
+        toast.error("Please enter a valid age");
+        return;
+      }
+
+      // Prepare data matching your Admin model - role set to MSWD-CSWDO-PDAO
+      const adminData = {
+        first_name: payload.first_name.trim(),
+        middle_name: payload.middle_name.trim() || "", // Convert empty to empty string
+        last_name: payload.last_name.trim(),
+        age: ageNum,
+        email: payload.email.trim().toLowerCase(),
+        password: payload.password,
+        address: payload.address.trim(),
+        phone_number: payload.phone_number.trim(),
+        role: "MSWD-CSWDO-PDAO" as const, // Fixed role
+      };
+
+      console.log("Creating admin with data:", adminData);
+
+      const result = await createAdmin(adminData);
+
+      console.log("Create admin result:", result);
+
       if (result?.success) {
         toast.success("Admin created successfully");
         setIsNewAdminModalOpen(false);
@@ -456,7 +518,8 @@ export default function UsersPage() {
         toast.error(result?.error || "Failed to create admin");
       }
     } catch (error: any) {
-      toast.error(error?.message || "Error creating admin");
+      console.error("Error creating admin:", error);
+      toast.error(error?.message || "An unexpected error occurred");
     } finally {
       setIsAdminSubmitting(false);
     }
@@ -476,6 +539,7 @@ export default function UsersPage() {
         toast.error(result?.error || "Failed to delete admin");
       }
     } catch (error: any) {
+      console.error("Error deleting admin:", error);
       toast.error(error?.message || "Error deleting admin");
     } finally {
       setIsAdminSubmitting(false);
@@ -566,10 +630,6 @@ export default function UsersPage() {
   const isSuperadmin = userRole === "Superadmin";
   const isMSWD = userRole === "MSWD-CSWDO-PDAO";
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // RENDER
-  // ─────────────────────────────────────────────────────────────────────────────
-
   return (
     <div className="container mx-auto py-6 space-y-6">
       {/* Page Header with Role Badge */}
@@ -598,7 +658,6 @@ export default function UsersPage() {
         </Badge>
       </div>
 
-      {/* For Superadmin: Show Tabs, For MSWD: Show only Users Content */}
       {isSuperadmin ? (
         <Tabs defaultValue="users" className="space-y-6">
           <TabsList className="grid w-full max-w-xs grid-cols-2">
@@ -614,9 +673,7 @@ export default function UsersPage() {
 
           {/* Users Tab */}
           <TabsContent value="users" className="space-y-6">
-            {/* Users Content */}
             <div className="space-y-6">
-              {/* Header */}
               <div className="flex justify-between items-center">
                 <div>
                   <h2 className="text-xl font-semibold">system users</h2>
@@ -636,7 +693,6 @@ export default function UsersPage() {
                 </div>
               </div>
 
-              {/* Stats */}
               <div className="grid grid-cols-5 gap-4">
                 <Card>
                   <CardContent className="pt-6">
@@ -680,7 +736,6 @@ export default function UsersPage() {
                 </Card>
               </div>
 
-              {/* Filters */}
               <Card>
                 <CardContent className="pt-6">
                   <div className="flex gap-4">
@@ -749,7 +804,6 @@ export default function UsersPage() {
                 </CardContent>
               </Card>
 
-              {/* Users List */}
               <Card>
                 <CardHeader>
                   <CardTitle>system users</CardTitle>
@@ -926,7 +980,6 @@ export default function UsersPage() {
           {/* Admins Tab (Superadmin Only) */}
           <TabsContent value="admins" className="space-y-6">
             <div className="space-y-6">
-              {/* Header */}
               <div className="flex justify-between items-center">
                 <div>
                   <h2 className="text-xl font-semibold">admin accounts</h2>
@@ -946,7 +999,6 @@ export default function UsersPage() {
                 </div>
               </div>
 
-              {/* Admin Stats */}
               <div className="grid grid-cols-3 gap-4">
                 <Card>
                   <CardContent className="pt-6">
@@ -976,7 +1028,6 @@ export default function UsersPage() {
                 </Card>
               </div>
 
-              {/* Admin Search */}
               <Card>
                 <CardContent className="pt-6">
                   <div className="relative">
@@ -991,7 +1042,6 @@ export default function UsersPage() {
                 </CardContent>
               </Card>
 
-              {/* Admins List */}
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -1117,9 +1167,7 @@ export default function UsersPage() {
           </TabsContent>
         </Tabs>
       ) : (
-        // For MSWD-CSWDO-PDAO: Show only Users Management without tabs
         <div className="space-y-6">
-          {/* Header */}
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-xl font-semibold">system users</h2>
@@ -1139,7 +1187,6 @@ export default function UsersPage() {
             </div>
           </div>
 
-          {/* Stats */}
           <div className="grid grid-cols-5 gap-4">
             <Card>
               <CardContent className="pt-6">
@@ -1181,7 +1228,6 @@ export default function UsersPage() {
             </Card>
           </div>
 
-          {/* Filters */}
           <Card>
             <CardContent className="pt-6">
               <div className="flex gap-4">
@@ -1247,7 +1293,6 @@ export default function UsersPage() {
             </CardContent>
           </Card>
 
-          {/* Users List */}
           <Card>
             <CardHeader>
               <CardTitle>system users</CardTitle>
@@ -1946,7 +1991,6 @@ export default function UsersPage() {
               </DialogHeader>
 
               <div className="space-y-6 py-2">
-                {/* Name fields */}
                 <div>
                   <h4 className="font-medium mb-3 text-sm text-muted-foreground uppercase tracking-wide">
                     name
@@ -2013,7 +2057,6 @@ export default function UsersPage() {
 
                 <Separator />
 
-                {/* Contact fields */}
                 <div>
                   <h4 className="font-medium mb-3 text-sm text-muted-foreground uppercase tracking-wide">
                     contact &amp; personal
@@ -2051,7 +2094,7 @@ export default function UsersPage() {
                             phone_number: e.target.value,
                           }))
                         }
-                        placeholder="09xxxxxxxxx"
+                        placeholder="09123456789"
                       />
                       {adminFormErrors.phone_number && (
                         <p className="text-xs text-red-500">
@@ -2072,7 +2115,7 @@ export default function UsersPage() {
                         onChange={(e) =>
                           setAdminForm((f) => ({ ...f, age: e.target.value }))
                         }
-                        placeholder="18–100"
+                        placeholder="25"
                       />
                       {adminFormErrors.age && (
                         <p className="text-xs text-red-500">
@@ -2093,7 +2136,7 @@ export default function UsersPage() {
                             address: e.target.value,
                           }))
                         }
-                        placeholder="full address"
+                        placeholder="123 Main St, Barangay, City"
                       />
                       {adminFormErrors.address && (
                         <p className="text-xs text-red-500">
@@ -2106,7 +2149,6 @@ export default function UsersPage() {
 
                 <Separator />
 
-                {/* Password fields */}
                 <div>
                   <h4 className="font-medium mb-3 text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
                     <Lock className="h-4 w-4" />
@@ -2159,7 +2201,11 @@ export default function UsersPage() {
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground mt-2">
-                    admin id will be auto-generated (e.g. ADMN-1234). role is
+                    Password requirements: minimum 8 characters, at least one
+                    uppercase letter, one lowercase letter, and one number.
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Admin ID will be auto-generated (e.g. ADMN-1234). Role is
                     fixed to <strong>MSWD-CSWDO-PDAO</strong>.
                   </p>
                 </div>
@@ -2180,6 +2226,7 @@ export default function UsersPage() {
                 <Button
                   onClick={handleCreateAdmin}
                   disabled={isAdminSubmitting}
+                  className="bg-purple-600 hover:bg-purple-700"
                 >
                   {isAdminSubmitting ? (
                     <RefreshCw className="h-4 w-4 animate-spin mr-2" />
