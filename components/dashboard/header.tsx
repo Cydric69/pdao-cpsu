@@ -223,7 +223,6 @@ export default function DashboardHeader({ user }: DashboardHeaderProps) {
 
   const navItems = [
     { name: "Dashboard", href: "/dashboard", icon: Home },
-    { name: "Registry", href: "/dashboard/registry", icon: Users },
     { name: "Applications", href: "/dashboard/application", icon: FileText },
     { name: "Cards", href: "/dashboard/cards", icon: CreditCard },
     { name: "Assistance", href: "/dashboard/assistance", icon: HeartHandshake },
