@@ -30,6 +30,8 @@ export interface CardData {
   verification_count: number;
   last_verified_at?: string | Date | null;
   admin_notes?: string | null;
+  face_image_url?: string | null;
+  signature_image_url?: string | null;
   created_at: string | Date;
   updated_at: string | Date;
 }
@@ -54,6 +56,7 @@ export interface CardIssuancePreview {
   emergency_contact_name: string;
   emergency_contact_number: string;
   is_new_applicant: boolean;
+  face_image_url?: string | null;
 }
 
 // ============ CONSTANTS ============
@@ -244,18 +247,6 @@ async function sendCardRevocationSMS(
 }
 
 // ============ HELPER: Sync user document after card issuance / revocation ============
-//
-// Your User schema has two card-related fields with DIFFERENT validators:
-//
-//   pwd_issued_id → /^\d{2}-\d{4}-\d{3}-\d{7}$/ — matches the PWD card number ✅
-//   card_id       → /^CARD-\d{6}$/               — a different internal format ❌
-//
-// We ONLY update pwd_issued_id. Writing the PWD card number into card_id would
-// fail the CARD-###### validator and the updateOne would either throw or silently
-// drop the write depending on runValidators.
-//
-// runValidators: false is still used so that setting pwd_issued_id to null on
-// revocation doesn't trip the format check.
 
 async function syncUserCardFields(
   userId: string,
@@ -284,7 +275,6 @@ async function syncUserCardFields(
       );
     }
   } catch (error) {
-    // Don't throw — card was already saved successfully. Just log.
     console.error("[syncUserCardFields] Error syncing user fields:", error);
   }
 }
@@ -448,6 +438,7 @@ export async function getCardIssuancePreview(
       emergency_contact_name: application.emergency_contact_name || "N/A",
       emergency_contact_number: application.emergency_contact_number || "N/A",
       is_new_applicant: !application.card_id,
+      face_image_url: application.face_image_url || null,
     };
 
     return { success: true, data: JSON.parse(JSON.stringify(preview)) };
@@ -534,6 +525,7 @@ export async function issueCard(applicationId: string, cardId: string) {
       .filter(Boolean)
       .join(" ");
 
+    // Create new card with face_image_url from application
     const newCard = new CardModel({
       card_id: trimmedCardId,
       user_id: application.user_id,
@@ -552,6 +544,7 @@ export async function issueCard(applicationId: string, cardId: string) {
       status: "Active",
       verification_count: 0,
       created_by: user.admin_id,
+      face_image_url: application.face_image_url || null, // Copy face image from application
     });
     await newCard.save();
     console.log(`[issueCard] ✅ Card created: ${trimmedCardId}`);
@@ -564,7 +557,7 @@ export async function issueCard(applicationId: string, cardId: string) {
     await application.save();
     console.log(`[issueCard] ✅ Application ${applicationId} → Approved`);
 
-    // Syncs pwd_issued_id (not card_id — see comment on syncUserCardFields)
+    // Syncs pwd_issued_id
     await syncUserCardFields(application.user_id, trimmedCardId, user.admin_id);
 
     const emailSent = await sendCardIssuanceEmail(
@@ -646,7 +639,7 @@ export async function issueCard(applicationId: string, cardId: string) {
   }
 }
 
-// ============ ACTIVATE PENDING CARD (assign card_id + set Active) ============
+// ============ ACTIVATE PENDING CARD ============
 
 export async function activatePendingCard(mongoId: string, cardId: string) {
   try {
@@ -658,7 +651,6 @@ export async function activatePendingCard(mongoId: string, cardId: string) {
     const trimmedCardId = cardId.trim();
     if (!trimmedCardId) return { success: false, error: "Card ID is required" };
 
-    // Pre-validate format before hitting the DB
     if (!CARD_ID_REGEX.test(trimmedCardId)) {
       return {
         success: false,
@@ -690,10 +682,10 @@ export async function activatePendingCard(mongoId: string, cardId: string) {
     card.type_of_disability = mapDisabilityType(card.type_of_disability);
     card.date_issued = new Date();
     card.updated_by = user.admin_id;
+    // Keep existing face_image_url if any
     await card.save();
     console.log(`[activatePendingCard] ✅ Activated card: ${trimmedCardId}`);
 
-    // Syncs pwd_issued_id (not card_id — see comment on syncUserCardFields)
     await syncUserCardFields(card.user_id, trimmedCardId, user.admin_id);
 
     const cardHolderName = card.name || "Card Holder";
@@ -787,6 +779,8 @@ export async function updateCard(
     emergency_contact_number: string;
     admin_notes: string;
     status: "Active" | "Expired" | "Revoked" | "Pending";
+    face_image_url: string | null;
+    signature_image_url: string | null;
   }>,
 ) {
   try {
@@ -874,7 +868,6 @@ export async function revokeCard(cardId: string, reason: string) {
 
     const cardHolderName = card.name || "Card Holder";
 
-    // Clear pwd_issued_id and mark user unverified
     await syncUserCardFields(card.user_id, null, user.admin_id);
 
     const emailSent = await sendCardRevocationEmail(
