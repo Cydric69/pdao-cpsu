@@ -59,9 +59,11 @@ import {
   Sparkles,
   Info,
   RotateCcw,
+  User,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import Image from "next/image";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,6 +87,7 @@ interface CardItem {
   last_verified_at?: string;
   admin_notes?: string;
   face_image_url?: string | null;
+  id_image_url?: string | null;
   signature_image_url?: string | null;
   created_at: string;
   updated_at: string;
@@ -112,6 +115,8 @@ interface Application {
   status: string;
   created_at: string;
   card_id?: string | null;
+  face_image_url?: string | null;
+  id_image_url?: string | null;
 }
 
 interface Statistics {
@@ -206,6 +211,85 @@ function PhilippineFlag() {
   );
 }
 
+// ─── Image Component with Error Handling ─────────────────────────────────────
+
+function IDPhoto({
+  imageUrl,
+  name,
+}: {
+  imageUrl?: string | null;
+  name: string;
+}) {
+  const [imgError, setImgError] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  if (!imageUrl || imgError) {
+    return (
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#f3f4f6",
+          gap: 4,
+        }}
+      >
+        <User className="h-8 w-8 text-gray-400" />
+        <span
+          style={{
+            fontSize: "clamp(5px,0.8vw,8px)",
+            color: "#9ca3af",
+            textAlign: "center",
+            lineHeight: 1.2,
+          }}
+        >
+          1×1
+          <br />
+          PHOTO
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      {isLoading && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "#f3f4f6",
+            zIndex: 1,
+          }}
+        >
+          <div className="w-6 h-6 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
+        </div>
+      )}
+      <img
+        src={imageUrl}
+        alt={`${name}'s ID Photo`}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          objectPosition: "top",
+        }}
+        onLoad={() => setIsLoading(false)}
+        onError={() => {
+          setImgError(true);
+          setIsLoading(false);
+        }}
+      />
+    </div>
+  );
+}
+
 // ─── Card Front ───────────────────────────────────────────────────────────────
 
 function CardFront({ card }: { card: CardItem }) {
@@ -220,6 +304,9 @@ function CardFront({ card }: { card: CardItem }) {
     Pending: { color: "#d97706" },
   };
   const sc = statusStyle[effectiveStatus] ?? statusStyle["Expired"];
+
+  // Get the image URL - prioritize face_image_url, fallback to id_image_url
+  const imageUrl = card.face_image_url || card.id_image_url || null;
 
   return (
     <div
@@ -349,51 +436,7 @@ function CardFront({ card }: { card: CardItem }) {
               boxShadow: "0 2px 6px rgba(0,0,0,0.18)",
             }}
           >
-            {card.face_image_url ? (
-              <img
-                src={card.face_image_url}
-                alt="ID Photo"
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                  objectPosition: "top",
-                }}
-              />
-            ) : (
-              <div
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  background: "#f3f4f6",
-                  gap: 4,
-                }}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  style={{ width: "40%", height: "40%", color: "#9ca3af" }}
-                  fill="currentColor"
-                >
-                  <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" />
-                </svg>
-                <span
-                  style={{
-                    fontSize: "clamp(5px,0.8vw,8px)",
-                    color: "#9ca3af",
-                    textAlign: "center",
-                    lineHeight: 1.2,
-                  }}
-                >
-                  1×1
-                  <br />
-                  PHOTO
-                </span>
-              </div>
-            )}
+            <IDPhoto imageUrl={imageUrl} name={card.name} />
           </div>
         </div>
 
