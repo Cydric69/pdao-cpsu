@@ -72,13 +72,13 @@ interface FormState {
   // Step 4 — Application details
   application_type: string;
   types_of_disability: string[];
-  causes_of_disability: string;
+  causes_of_disability: string[];
 }
 
 type FormErrors = Partial<Record<keyof FormState, string>>;
 
 // ─────────────────────────────────────────────
-// CONSTANTS
+// CONSTANTS - Updated to match backend enum values
 // ─────────────────────────────────────────────
 
 const INITIAL_FORM: FormState = {
@@ -98,7 +98,7 @@ const INITIAL_FORM: FormState = {
   contact_number: "",
   application_type: "",
   types_of_disability: [],
-  causes_of_disability: "",
+  causes_of_disability: [],
 };
 
 // Step 0 = user select, Steps 1–4 = form
@@ -109,24 +109,30 @@ const STEPS = [
   { id: 4, label: "Details", icon: FileText },
 ] as const;
 
+// Updated: Disability types that match backend enum
 const DISABILITY_TYPES = [
-  "Visual Impairment",
   "Deaf or Hard of Hearing",
+  "Intellectual Disability",
   "Learning Disability",
   "Mental Disability",
-  "Physical Disability (Chronic Illness)",
-  "Physical Disability (Locomotor)",
+  "Physical Disability (Orthopedic)",
   "Psychosocial Disability",
   "Speech and Language Impairment",
+  "Visual Disability",
   "Cancer (RA11215)",
   "Rare Disease (RA10747)",
 ];
 
+// Updated: Causes of disability that match backend enum
 const DISABILITY_CAUSES = [
   "Congenital / Inborn",
-  "Acquired / Illness",
-  "Acquired / Injury",
-  "Acquired / Age / Senior",
+  "Acquired",
+  "Autism",
+  "ADHD",
+  "Cerebral Palsy",
+  "Down Syndrome",
+  "Chronic Illness",
+  "Injury",
 ];
 
 // ─────────────────────────────────────────────
@@ -390,42 +396,52 @@ export function NewApplicationModal({
       date_of_birth: dob,
       sex: user.sex || "",
       civil_status: "",
-      // address — User model uses address.barangay / address.city_municipality
       region: user.address?.region || "Region VI - Western Visayas",
       province: user.address?.province || "Negros Occidental",
       municipality: user.address?.city_municipality || "Bacolod City",
       barangay: user.address?.barangay || "",
       zip_code: user.address?.zip_code || "6100",
-      // contact
       email: user.email || "",
       contact_number: user.contact_number || "",
-      // application details — left blank for admin to fill
       application_type: "",
       types_of_disability: [],
-      causes_of_disability: "",
+      causes_of_disability: [],
     });
 
     setSelectedUser(user);
     setStep(1);
   }
 
-  function setField(field: keyof FormState, value: string) {
+  function setField(field: keyof FormState, value: string | string[]) {
     setForm((prev) => ({ ...prev, [field]: value }));
-    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
+    if (errors[field as keyof FormErrors])
+      setErrors((prev) => ({
+        ...prev,
+        [field as keyof FormErrors]: undefined,
+      }));
   }
 
   function toggleDisability(type: string) {
-    setForm((prev) => {
-      const current = prev.types_of_disability;
-      return {
-        ...prev,
-        types_of_disability: current.includes(type)
-          ? current.filter((t) => t !== type)
-          : [...current, type],
-      };
-    });
+    setForm((prev) => ({
+      ...prev,
+      types_of_disability: prev.types_of_disability.includes(type)
+        ? prev.types_of_disability.filter((t) => t !== type)
+        : [...prev.types_of_disability, type],
+    }));
     if (errors.types_of_disability) {
       setErrors((prev) => ({ ...prev, types_of_disability: undefined }));
+    }
+  }
+
+  function toggleCause(cause: string) {
+    setForm((prev) => ({
+      ...prev,
+      causes_of_disability: prev.causes_of_disability.includes(cause)
+        ? prev.causes_of_disability.filter((c) => c !== cause)
+        : [...prev.causes_of_disability, cause],
+    }));
+    if (errors.causes_of_disability) {
+      setErrors((prev) => ({ ...prev, causes_of_disability: undefined }));
     }
   }
 
@@ -466,8 +482,8 @@ export function NewApplicationModal({
         e.application_type = "Application type is required";
       if (form.types_of_disability.length === 0)
         e.types_of_disability = "Select at least one type of disability";
-      if (!form.causes_of_disability)
-        e.causes_of_disability = "Cause of disability is required";
+      if (form.causes_of_disability.length === 0)
+        e.causes_of_disability = "Select at least one cause of disability";
     }
 
     setErrors(e);
@@ -480,7 +496,6 @@ export function NewApplicationModal({
 
   function handleBack() {
     if (step === 1) {
-      // Go back to user select
       setStep(0);
     } else {
       setStep((s) => s - 1);
@@ -495,10 +510,8 @@ export function NewApplicationModal({
     try {
       const fd = new FormData();
 
-      // user_id: prefer the selected user's user_id, fall back to admin
       fd.append("user_id", selectedUser?.user_id ?? adminUser?.admin_id ?? "");
 
-      // Personal
       fd.append("first_name", form.first_name);
       fd.append("middle_name", form.middle_name || "N/A");
       fd.append("last_name", form.last_name);
@@ -507,7 +520,6 @@ export function NewApplicationModal({
       fd.append("sex", form.sex);
       fd.append("civil_status", form.civil_status);
 
-      // residence_address — JSON.parse'd by action
       fd.append(
         "residence_address",
         JSON.stringify({
@@ -519,7 +531,6 @@ export function NewApplicationModal({
         }),
       );
 
-      // contact_details — JSON.parse'd by action
       fd.append(
         "contact_details",
         JSON.stringify({
@@ -528,21 +539,18 @@ export function NewApplicationModal({
         }),
       );
 
-      // types_of_disability — JSON.parse'd by action
       fd.append(
         "types_of_disability",
         JSON.stringify(form.types_of_disability),
       );
 
-      // causes_of_disability — JSON.parse'd by action (expects array)
       fd.append(
         "causes_of_disability",
-        JSON.stringify([form.causes_of_disability]),
+        JSON.stringify(form.causes_of_disability),
       );
 
       fd.append("application_type", form.application_type);
 
-      // Required JSON stubs so JSON.parse doesn't throw
       fd.append("id_references", JSON.stringify({}));
       fd.append("family_background", JSON.stringify({}));
       fd.append("accomplished_by", JSON.stringify({}));
@@ -587,7 +595,6 @@ export function NewApplicationModal({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Selected user pill — shown on form steps */}
         {isFormStep && selectedUser && (
           <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm">
             <Check className="h-4 w-4 text-green-600 shrink-0" />
@@ -601,10 +608,8 @@ export function NewApplicationModal({
           </div>
         )}
 
-        {/* Step indicator only on form steps */}
         {isFormStep && <StepIndicator current={step} />}
 
-        {/* ── Step 0: User Select ── */}
         {step === 0 && (
           <UserSelectStep
             onSelect={prefillFromUser}
@@ -612,7 +617,7 @@ export function NewApplicationModal({
           />
         )}
 
-        {/* ── Step 1: Personal Info ── */}
+        {/* Step 1: Personal Info */}
         {step === 1 && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
@@ -735,7 +740,7 @@ export function NewApplicationModal({
           </div>
         )}
 
-        {/* ── Step 2: Address ── */}
+        {/* Step 2: Address */}
         {step === 2 && (
           <div className="space-y-4">
             <div>
@@ -824,7 +829,7 @@ export function NewApplicationModal({
           </div>
         )}
 
-        {/* ── Step 3: Contact ── */}
+        {/* Step 3: Contact */}
         {step === 3 && (
           <div className="space-y-4">
             <div>
@@ -865,7 +870,7 @@ export function NewApplicationModal({
           </div>
         )}
 
-        {/* ── Step 4: Application Details ── */}
+        {/* Step 4: Application Details */}
         {step === 4 && (
           <div className="space-y-4">
             <div>
@@ -926,25 +931,32 @@ export function NewApplicationModal({
               <Label>
                 Cause of Disability <span className="text-red-500">*</span>
               </Label>
-              <Select
-                value={form.causes_of_disability}
-                onValueChange={(v) => setField("causes_of_disability", v)}
-              >
-                <SelectTrigger
-                  className={
-                    errors.causes_of_disability ? "border-red-400" : ""
-                  }
-                >
-                  <SelectValue placeholder="Select cause" />
-                </SelectTrigger>
-                <SelectContent>
-                  {DISABILITY_CAUSES.map((c) => (
-                    <SelectItem key={c} value={c}>
+              <p className="mb-2 text-xs text-gray-500">
+                Select all that apply
+              </p>
+              <div className="grid grid-cols-1 gap-1.5 rounded-lg border border-gray-200 p-3">
+                {DISABILITY_CAUSES.map((cause) => (
+                  <label
+                    key={cause}
+                    className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm hover:bg-gray-50"
+                  >
+                    <Checkbox
+                      checked={form.causes_of_disability.includes(cause)}
+                      onCheckedChange={() => toggleCause(cause)}
+                    />
+                    <span className="text-gray-700">{cause}</span>
+                  </label>
+                ))}
+              </div>
+              {form.causes_of_disability.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {form.causes_of_disability.map((c) => (
+                    <Badge key={c} variant="secondary" className="text-xs">
                       {c}
-                    </SelectItem>
+                    </Badge>
                   ))}
-                </SelectContent>
-              </Select>
+                </div>
+              )}
               <FieldError message={errors.causes_of_disability} />
             </div>
 
@@ -1018,7 +1030,7 @@ export function NewApplicationModal({
           </div>
         )}
 
-        {/* ── Footer ── */}
+        {/* Footer */}
         {isFormStep && (
           <div className="flex items-center justify-between border-t pt-4 mt-2">
             <Button
